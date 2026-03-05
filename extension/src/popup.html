@@ -1,0 +1,37 @@
+<div style="width: 300px; padding: 15px; font-family: sans-serif; background: #0f1730; color: white;">
+  <h3 style="margin-top: 0; color: #6366f1;">New Job Detected</h3>
+  
+  <div style="margin-bottom: 10px;">
+    <label style="font-size: 11px; color: #94a3b8;">Job URL</label>
+    <input id="jobUrl" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+    <div>
+      <label style="font-size: 11px; color: #94a3b8;">Company</label>
+      <input id="company" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+    </div>
+    <div>
+      <label style="font-size: 11px; color: #94a3b8;">Position</label>
+      <input id="position" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+    <div>
+      <label style="font-size: 11px; color: #94a3b8;">Location</label>
+      <input id="location" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+    </div>
+    <div>
+      <label style="font-size: 11px; color: #94a3b8;">Salary</label>
+      <input id="salary" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 10px;">
+    <button id="acceptBtn" style="flex: 1; padding: 8px; background: #6366f1; border: none; color: white; border-radius: 4px; cursor: pointer;">Accept</button>
+    <button id="rejectBtn" style="flex: 1; padding: 8px; background: #334155; border: none; color: white; border-radius: 4px; cursor: pointer;">Reject</button>
+  </div>
+  <p id="status" style="font-size: 10px; text-align: center; margin-top: 10px;"></p>
+</div>
+<script src="popup.js"></script>

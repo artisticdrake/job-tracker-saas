@@ -1,0 +1,17 @@
+# Node modules
+node_modules/
+
+# Environment variables (CRITICAL)
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+out/
+
+# IDE/OS files
+.vscode/
+.DS_Store
+*.log

@@ -1,0 +1,22 @@
+{
+  "name": "job-tracker-monorepo",
+  "private": true,
+  "workspaces": [
+    "web",
+    "api",
+    "extension",
+    "shared"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=web",
+    "dev:api": "npm run dev --workspace=api",
+    "build:ext": "npm run build --workspace=extension",
+    "lint": "npm run lint --workspaces"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "prettier": "^3.0.0",
+    "eslint": "^8.0.0",
+    "concurrently": "^8.0.0"
+  }
+}

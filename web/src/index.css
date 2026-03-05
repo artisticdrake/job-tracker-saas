@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Minimal theme tokens */
+:root{
+  --bg: #0b1020;
+  --panel: #0f1730;
+  --panel2:#121d3a;
+  --border: rgba(148,163,184,0.18);
+  --text: #e6eaf2;
+  --subtext: rgba(226,232,240,0.72);
+  --muted: rgba(148,163,184,0.65);
+  --accent: #6366f1;
+  --radius: 14px;
+  --font: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+.jt-panel {
+  background: color-mix(in oklab, var(--panel) 78%, black 22%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 55px rgba(0,0,0,.35);
+}
+
+.jt-card {
+  background: color-mix(in oklab, var(--panel2) 70%, black 30%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.jt-divider {
+  border-top: 1px solid var(--border);
+}
+
+.jt-input {
+  background: color-mix(in oklab, var(--panel2) 72%, black 28%);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
+  color: var(--text);
+  padding: 10px 12px;
+  outline: none;
+}
+.jt-input:focus{
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.jt-btn {
+  background: color-mix(in oklab, var(--panel2) 70%, black 30%);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 6px);
+  padding: 10px 12px;
+  color: var(--text);
+}
+.jt-btn:hover{
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+}
+
+.jt-btn-primary {
+  background: color-mix(in oklab, var(--accent) 32%, var(--panel2));
+  border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--border));
+  border-radius: calc(var(--radius) - 6px);
+  padding: 10px 12px;
+  color: var(--text);
+}
+.jt-btn-primary:hover{
+  box-shadow: 0 0 22px color-mix(in oklab, var(--accent) 25%, transparent);
+}
+
+.jt-pill{
+  display:inline-flex;
+  align-items:center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel) 75%, black 25%);
+  font-size: 12px;
+  color: var(--subtext);
+}
