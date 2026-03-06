@@ -505,7 +505,6 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [editId, setEditId] = useState(null);
   const [expandedApp, setExpandedApp] = useState(null);
   const [aiProvider, setAiProvider] = useState({ useOpenAI: false, hasApiKey: false });
-  const [backupState, setBackupState] = useState({ busy: false, msg: "" });
 
   useEffect(() => {
   // AI provider settings are stored server-side in later tiers.
@@ -942,8 +941,14 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     setShowForm(true);
   };
 
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
   const handleDelete = async (id: any) => {
-    if (!confirm("Delete this application?")) return;
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDelete = async (id: any) => {
+    setDeleteConfirmId(null);
 
     if (!session?.access_token) {
       alert("You are not signed in.");
@@ -1015,14 +1020,6 @@ const handleAutofill = async () => {
     a.download = `job-applications-${todayISO()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  const createBackupZip = async () => {
-    setBackupState({ busy: false, msg: "Cloud Sync Active. Your data is automatically backed up to the cloud." });
-  };
-
-  const restoreBackupZip = async () => {
-    setBackupState({ busy: false, msg: "Cloud Sync Active. Your data is automatically backed up to the cloud." });
   };
 
   const S = {
@@ -1334,12 +1331,6 @@ const handleAutofill = async () => {
             <Palette size={18} /> Customization
           </button>
           <button
-            className={`jt-tab ${activeTab === "backup" ? "active" : ""}`}
-            onClick={() => setActiveTab("backup")}
-          >
-            <DatabaseBackup size={18} /> Backup
-          </button>
-          <button
             className={`jt-tab ${activeTab === "profile" ? "active" : ""}`}
             onClick={() => setActiveTab("profile")}
           >
@@ -1417,9 +1408,6 @@ const handleAutofill = async () => {
               </div>
               <button onClick={() => setShowForm(true)} style={S.button("primary")}>
                 <Plus size={18} /> Add Application
-              </button>
-              <button onClick={exportCsv} style={S.button("secondary")}>
-                <Upload size={18} /> Export CSV
               </button>
             </div>
 
@@ -1818,27 +1806,6 @@ const handleAutofill = async () => {
 />
 )}
 
-        {/* Backup Tab */}
-        {activeTab === "backup" && (
-          <div style={{ maxWidth: 800, margin: "0 auto" }}>
-            <div style={S.card}>
-              <div style={{ padding: 32 }}>
-                <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
-                  <DatabaseBackup size={28} />
-                  Backup & Restore
-                </div>
-                <div style={{ color: "var(--jt-muted)", marginBottom: 24, fontSize: 15 }}>
-                  Create complete backups including all your applications and attached documents. Restore will overwrite your current data.
-                </div>
-
-                <div style={{ ...S.panel, padding: 16, fontSize: 14 }}>
-                  Cloud Sync Active. Your data is automatically backed up to the cloud.
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Profile Tab */}
         {activeTab === "profile" && (
           <ProfileTab
@@ -1849,6 +1816,7 @@ const handleAutofill = async () => {
             appsCount={apps.length}
             onSaveProfileMeta={saveProfileMeta}
             onLogout={handleLogout}
+            onExportCsv={exportCsv}
             onDeleteProfile={async () => {
               try {
                 const { data: { session: cs } } = await supabase.auth.getSession();
@@ -1916,6 +1884,38 @@ const handleAutofill = async () => {
               >
                 Let's go! 🚀
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Dialog */}
+        {deleteConfirmId && (
+          <div className="jt-modal" style={{ zIndex: 1500 }}>
+            <div className="jt-card" style={{
+              width: "min(380px, 100%)",
+              padding: 32,
+              textAlign: "center",
+              animation: "none",
+            }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>🗑️</div>
+              <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Delete Application?</div>
+              <div style={{ color: "var(--jt-muted)", fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
+                This will permanently remove the application from your tracker. This cannot be undone.
+              </div>
+              <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+                <button
+                  onClick={() => setDeleteConfirmId(null)}
+                  style={S.button("secondary")}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => confirmDelete(deleteConfirmId)}
+                  style={{ ...S.button("secondary"), border: "1px solid rgba(248,113,113,0.5)", color: "#f87171" }}
+                >
+                  <Trash2 size={15} /> Delete
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2207,7 +2207,7 @@ const ColorInput = ({ label, value, onChange }) => (
   </div>
 );
 /** ---------- Profile Tab Component ---------- */
-function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, onSaveProfileMeta, onLogout, onDeleteProfile, S, theme }: any) {
+function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, onSaveProfileMeta, onLogout, onExportCsv, onDeleteProfile, S, theme }: any) {
   const [editingName, setEditingName] = useState(false);
   const [localName, setLocalName] = useState(displayName);
   const [localAvatar, setLocalAvatar] = useState(avatarId);
@@ -2348,6 +2348,30 @@ function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, o
             <button onClick={onLogout} style={{ ...S.button("secondary"), justifyContent: "flex-start", padding: "14px 18px", borderRadius: "var(--jt-radius)", width: "100%" }}>
               <LogOut size={16} /> Sign Out
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Backup */}
+      <div style={S.card}>
+        <div style={{ padding: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}>
+            <DatabaseBackup size={20} /> Backup
+          </div>
+          <div style={{ color: "var(--jt-muted)", fontSize: 13, marginBottom: 20 }}>
+            Download a full copy of your applications as a CSV file. Your data is also automatically synced to the cloud.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <button
+              onClick={onExportCsv}
+              style={{ ...S.button("primary"), gap: 8 }}
+            >
+              <Upload size={16} /> Download Backup (.csv)
+            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--jt-muted)", fontSize: 13 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399", boxShadow: "0 0 6px #34d399" }} />
+              Cloud sync active — {appsCount} application{appsCount !== 1 ? "s" : ""} stored
+            </div>
           </div>
         </div>
       </div>
