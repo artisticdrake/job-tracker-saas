@@ -189,7 +189,8 @@ function calculateConversionRate(apps: any[], fromStatus: string, toStatus: stri
 }
 
 /** ---------- Theme system ---------- */
-const THEME_KEY = "jt.theme.v4";
+// Theme key is scoped per-user to prevent cross-user localStorage leaks
+const getThemeKey = (userId: string) => `jt.theme.v4.${userId}`;
 
 const DEFAULT_THEME = {
   mode: "dark",
@@ -410,43 +411,28 @@ const BEAUTIFUL_PRESETS = [
   },
 ];
 
-function loadTheme() {
+// Read from user-scoped localStorage cache (fast, but NOT authoritative — cloud wins)
+function loadCachedTheme(userId: string) {
   try {
-    const stored = localStorage.getItem(THEME_KEY);
-    if (!stored) return DEFAULT_THEME;
+    const stored = localStorage.getItem(getThemeKey(userId));
+    if (!stored) return null;
     return { ...DEFAULT_THEME, ...JSON.parse(stored) };
   } catch {
-    return DEFAULT_THEME;
+    return null;
+  }
+}
+
+// Write to user-scoped localStorage cache
+function writeCachedTheme(userId: string, t: any) {
+  try {
+    localStorage.setItem(getThemeKey(userId), JSON.stringify(t));
+  } catch {
+    // storage quota exceeded or private browsing — silently ignore
   }
 }
 
 const CLASSIC_BLUE_THEME =
   BEAUTIFUL_PRESETS.find((p) => p.name === "Classic Blue")?.theme ?? DEFAULT_THEME;
-
-
-const saveTheme = async (t: any) => {
-    setTheme(t);
-    localStorage.setItem(THEME_KEY, JSON.stringify(t)); // <-- Local cache for instant loads
-    
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}` 
-        },
-        body: JSON.stringify({ theme_settings: t })
-      });
-      
-      const result = await response.json();
-      console.log("Cloud Save Response:", result);
-    } catch (error) {
-      console.error("Error saving theme to cloud:", error);
-    }
-  };
 
 function applyThemeToDom(t: any) {
   const pal = t.palettes[t.mode];
@@ -471,8 +457,13 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [apps, setApps] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [theme, setTheme] = useState(loadTheme);
-  const [previewTheme, setPreviewTheme] = useState(loadTheme);
+  const userId: string = session?.user?.id ?? "";
+
+  // Start with DEFAULT_THEME — fetchProfile will immediately replace this with either
+  // the user's cloud-saved theme or Classic Blue. We do NOT load from localStorage here
+  // to prevent cross-user state leakage.
+  const [theme, setTheme] = useState<any>(DEFAULT_THEME);
+  const [previewTheme, setPreviewTheme] = useState<any>(DEFAULT_THEME);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState("applications");
   const [searchTerm, setSearchTerm] = useState("");
@@ -590,24 +581,57 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     }
   };
 
-  const fetchProfile = async () => {
+  // saveTheme is inside the component so it has access to session and userId
+  const saveTheme = async (t: any) => {
+    setTheme(t);
+    writeCachedTheme(userId, t); // cache for this specific user
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession) return;
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentSession.access_token}`,
+        },
+        body: JSON.stringify({ theme_settings: t }),
+      });
+      const result = await response.json();
+      console.log("Cloud Save Response:", result);
+    } catch (error) {
+      console.error("Error saving theme to cloud:", error);
+    }
+  };
+
+  const fetchProfile = async () => {
+    if (!userId) return;
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession) return;
+
+      // Optimistic: apply user's localStorage cache instantly while we wait for cloud
+      const cached = loadCachedTheme(userId);
+      if (cached) {
+        setTheme(cached);
+        setPreviewTheme(cached);
+      }
 
       const res = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${currentSession.access_token}` },
       });
       const data = await res.json();
-      
+
       if (data?.success && data?.data?.theme_settings && Object.keys(data.data.theme_settings).length > 0) {
-        // Cloud theme found: Apply it
-        setTheme(data.data.theme_settings);
-        localStorage.setItem(THEME_KEY, JSON.stringify(data.data.theme_settings));
+        // Cloud is the source of truth — always wins over cache
+        const cloudTheme = data.data.theme_settings;
+        setTheme(cloudTheme);
+        setPreviewTheme(cloudTheme);
+        writeCachedTheme(userId, cloudTheme);
       } else {
-        // NO cloud theme found (New User): Force the Classic Blue default
+        // New user with no saved theme → force Classic Blue
         setTheme(DEFAULT_THEME);
-        localStorage.setItem(THEME_KEY, JSON.stringify(DEFAULT_THEME));
+        setPreviewTheme(DEFAULT_THEME);
+        writeCachedTheme(userId, DEFAULT_THEME);
       }
     } catch (error) {
       console.error("Error fetching profile:", error);
