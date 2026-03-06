@@ -137,9 +137,11 @@ function ensureTimeline(app: any) {
 }
 
 function getLastUpdatedTs(app: any) {
+  // Prefer the DB last_updated timestamp if available
+  if (app.last_updated) return new Date(app.last_updated).getTime();
   const tl = Array.isArray(app.timeline) ? app.timeline : [];
   if (!tl.length) return parseLocalYYYYMMDD(app.dateApplied)?.getTime() ?? Date.now();
-  return tl.reduce((mx, e) => Math.max(mx, Number(e?.ts || 0)), 0) || Date.now();
+  return tl.reduce((mx: number, e: any) => Math.max(mx, Number(e?.ts || 0)), 0) || Date.now();
 }
 
 function normalizeCompanyKey(company: any) {
@@ -519,7 +521,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     status: "Applied",
     jobUrl: "",
     source: "LinkedIn",
+    referral: "No",
     notes: "",
+    jobDescription: "",
     documents: [],
   });
 
@@ -596,17 +600,18 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
       const mapped = list.map((app: any) => {
         const dateApplied = (app.date_applied || app.dateApplied || "").slice?.(0, 10) || todayISO();
+        // Use timeline from DB if it exists, otherwise seed with Applied entry
+        const existingTimeline = Array.isArray(app.timeline) && app.timeline.length > 0
+          ? app.timeline
+          : [{ status: app.status || "Applied", ts: new Date(dateApplied).getTime() }];
         return ensureTimeline({
           ...app,
           jobUrl: app.job_url ?? app.jobUrl ?? "",
+          jobDescription: app.job_description ?? app.jobDescription ?? "",
+          referral: app.referral ?? "No",
           dateApplied,
           documents: app.documents ?? app.documents_json ?? app.documents ?? [],
-          timeline: [
-            {
-              status: "Applied",
-              ts: new Date(dateApplied).getTime(),
-            },
-          ],
+          timeline: existingTimeline,
         });
       });
 
@@ -890,6 +895,24 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       return;
     }
 
+    const now = Date.now();
+
+    // Build updated timeline — append new entry only if status changed
+    let updatedTimeline: any[];
+    if (editId) {
+      const existingApp = apps.find((a: any) => a.id === editId);
+      const prevTimeline: any[] = Array.isArray(existingApp?.timeline) ? existingApp.timeline : [];
+      const lastStatus = prevTimeline[prevTimeline.length - 1]?.status;
+      if (lastStatus !== formData.status) {
+        updatedTimeline = [...prevTimeline, { status: formData.status, ts: now }];
+      } else {
+        updatedTimeline = prevTimeline;
+      }
+    } else {
+      // New application — seed timeline with Applied entry
+      updatedTimeline = [{ status: formData.status || "Applied", ts: now }];
+    }
+
     const payload: any = {
       company: formData.company,
       position: formData.position,
@@ -899,7 +922,11 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       status: formData.status,
       job_url: formData.jobUrl,
       source: formData.source,
+      referral: formData.referral ?? "No",
       notes: formData.notes,
+      job_description: formData.jobDescription,
+      timeline: updatedTimeline,
+      last_updated: new Date(now).toISOString(),
     };
 
     try {
@@ -952,7 +979,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       status: "Applied",
       jobUrl: "",
       source: "LinkedIn",
+    referral: "No",
       notes: "",
+      jobDescription: "",
       documents: [],
     });
     setShowForm(false);
@@ -960,7 +989,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   };
 
   const handleEdit = (app: any) => {
-    setFormData({ ...app });
+    setFormData({ ...app, jobDescription: app.jobDescription ?? "" });
     setEditId(app.id);
     setShowForm(true);
   };
@@ -1426,7 +1455,7 @@ const handleAutofill = async () => {
             className={`jt-tab ${activeTab === "files" ? "active" : ""}`}
             onClick={() => { setActiveTab("files"); fetchResumes(); }}
           >
-            <Files size={18} /> Resumes
+            <Files size={18} /> Files
           </button>
           <button
             className={`jt-tab ${activeTab === "analytics" ? "active" : ""}`}
@@ -1533,6 +1562,7 @@ const handleAutofill = async () => {
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Company</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Position</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Status</th>
+                      <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Referral</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Last Updated</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Applied</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Actions</th>
@@ -1541,20 +1571,29 @@ const handleAutofill = async () => {
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={6} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
+                        <td colSpan={7} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
                           Loading applications...
                         </td>
                       </tr>
                     ) : sortedApps.length === 0 ? (
                       <tr>
-                        <td colSpan={6} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
+                        <td colSpan={7} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
                           No applications yet. Click "Add Application" to get started!
                         </td>
                       </tr>
                     ) : (
                       sortedApps.map((app) => (
                         <React.Fragment key={app.id}>
-                          <tr style={{ borderBottom: "1px solid var(--jt-border)", transition: "background 0.2s ease" }}>
+                          <tr
+                            onClick={() => setExpandedApp(app.id)}
+                            style={{
+                              borderBottom: "1px solid var(--jt-border)",
+                              transition: "background 0.2s ease",
+                              cursor: "pointer",
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--jt-panel)")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                          >
                             <td style={{ padding: "16px" }}>
                               <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>{app.company}</div>
                               <div style={{ fontSize: 13, color: "var(--jt-muted)" }}> {app.location || "Remote"}</div>
@@ -1579,6 +1618,20 @@ const handleAutofill = async () => {
                                 {app.status}
                               </div>
                             </td>
+                            <td style={{ padding: "16px" }}>
+                              {app.referral === "Yes" ? (
+                                <div style={{
+                                  display: "inline-flex", alignItems: "center", gap: 4,
+                                  padding: "4px 10px", borderRadius: 999,
+                                  fontSize: 12, fontWeight: 600,
+                                  color: "#34d399",
+                                  background: "rgba(52,211,153,0.1)",
+                                  border: "1px solid rgba(52,211,153,0.35)",
+                                }}>✓ Yes</div>
+                              ) : (
+                                <div style={{ fontSize: 13, color: "var(--jt-muted)" }}>N/A</div>
+                              )}
+                            </td>
                             <td style={{ padding: "16px", fontSize: 14, color: "var(--jt-text)" }}>
                               {formatShortDate(getLastUpdatedTs(app))}
                             </td>
@@ -1586,7 +1639,7 @@ const handleAutofill = async () => {
                               {formatLocalYYYYMMDDToLocale(app.dateApplied)}
                             </td>
                             <td style={{ padding: "16px" }}>
-                              <div style={{ display: "flex", gap: 8 }}>
+                              <div style={{ display: "flex", gap: 8 }} onClick={(e) => e.stopPropagation()}>
                                 <button onClick={() => handleEdit(app)} style={{ ...S.button("secondary"), padding: "6px 10px" }} title="Edit">
                                   <Edit2 size={14} />
                                 </button>
@@ -1601,78 +1654,13 @@ const handleAutofill = async () => {
                                 <button
                                   onClick={() => setExpandedApp(expandedApp === app.id ? null : app.id)}
                                   style={{ ...S.button("secondary"), padding: "6px 10px" }}
-                                  title="Expand"
+                                  title="View Details"
                                 >
                                   {expandedApp === app.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 </button>
                               </div>
                             </td>
                           </tr>
-                          {expandedApp === app.id && (
-                            <tr style={{ borderBottom: "1px solid var(--jt-border)" }}>
-                              <td colSpan={6} style={{ padding: "20px", background: "var(--jt-bg)" }}>
-                                {app.notes && (
-                                  <div style={{ marginBottom: 16 }}>
-                                    <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>Notes:</div>
-                                    <div style={{ color: "var(--jt-muted)", fontSize: 14, whiteSpace: "pre-wrap" }}>{app.notes}</div>
-                                  </div>
-                                )}
-
-                                {app.documents && app.documents.length > 0 && (
-                                  <div style={{ marginBottom: 16 }}>
-                                    <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>Documents:</div>
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                      {app.documents.map((doc, i) => (
-                                        <button
-                                          key={i}
-                                          onClick={() => openDoc(doc)}
-                                          style={{
-                                            ...S.button("secondary"),
-                                            padding: "8px 12px",
-                                            fontSize: 13,
-                                          }}
-                                        >
-                                          <File size={14} /> {doc.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>Timeline:</div>
-                                  <div style={{ display: "grid", gap: 8 }}>
-                                    {(app.timeline || []).map((t, i) => (
-                                      <div
-                                        key={i}
-                                        style={{
-                                          display: "flex",
-                                          alignItems: "center",
-                                          gap: 12,
-                                          padding: "8px 12px",
-                                          background: "var(--jt-panel)",
-                                          borderRadius: "8px",
-                                          fontSize: 13,
-                                        }}
-                                      >
-                                        <div
-                                          style={{
-                                            width: 8,
-                                            height: 8,
-                                            borderRadius: "50%",
-                                            background: STATUS_COLORS[t.status] || STATUS_COLORS.Applied,
-                                            boxShadow: `0 0 8px ${STATUS_COLORS[t.status]}`,
-                                          }}
-                                        />
-                                        <div style={{ flex: 1, fontWeight: 600 }}>{t.status}</div>
-                                        <div style={{ color: "var(--jt-muted)" }}>{formatShortDate(t.ts)}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
                         </React.Fragment>
                       ))
                     )}
@@ -2137,6 +2125,136 @@ const handleAutofill = async () => {
           </div>
         )}
 
+        {/* Application Detail Modal */}
+        {expandedApp && (() => {
+          const app = sortedApps.find((a) => a.id === expandedApp);
+          if (!app) return null;
+          return (
+            <div className="jt-modal" style={{ zIndex: 1500, alignItems: "flex-start", paddingTop: 40 }}>
+              <div className="jt-card" style={{ width: "min(740px, 100%)", maxHeight: "85vh", overflow: "auto", display: "flex", flexDirection: "column" }}>
+                {/* Header */}
+                <div style={{ padding: "24px 28px", borderBottom: "1px solid var(--jt-border)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexShrink: 0 }}>
+                  <div>
+                    <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>{app.company}</div>
+                    <div style={{ fontSize: 15, color: "var(--jt-muted)", marginBottom: 10 }}>{app.position}{app.location ? ` · ${app.location}` : ""}</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={{
+                        padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700,
+                        background: STATUS_COLORS[app.status] || STATUS_COLORS.Applied,
+                        color: "#fff", boxShadow: `0 0 12px ${STATUS_COLORS[app.status]}80`,
+                      }}>{app.status}</div>
+                      {app.source && <div style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, border: "1px solid var(--jt-border)", color: "var(--jt-muted)" }}>{app.source}</div>}
+                      {app.salary && <div style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, border: "1px solid var(--jt-border)", color: "var(--jt-muted)" }}>USD {app.salary}</div>}
+                      {app.referral === "Yes" && (
+                        <div style={{
+                          padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+                          border: "1px solid rgba(52,211,153,0.5)",
+                          color: "#34d399",
+                          background: "rgba(52,211,153,0.1)",
+                        }}>Referral</div>
+                      )}
+
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    {app.jobUrl && (
+                      <button onClick={() => window.open(app.jobUrl, "_blank")} style={{ ...S.button("secondary"), padding: "8px 12px" }} title="Open Job URL">
+                        <ExternalLink size={15} />
+                      </button>
+                    )}
+                    <button onClick={() => { handleEdit(app); setExpandedApp(null); }} style={{ ...S.button("secondary"), padding: "8px 12px" }} title="Edit">
+                      <Edit2 size={15} />
+                    </button>
+                    <button onClick={() => setExpandedApp(null)} style={{ ...S.button("secondary"), padding: "8px 12px" }}>
+                      <X size={15} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Body */}
+                <div style={{ padding: 28, display: "grid", gap: 24, overflow: "auto" }}>
+
+                  {/* Key info row */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+                    {[
+                      { label: "Applied", value: formatLocalYYYYMMDDToLocale(app.dateApplied) },
+                      { label: "Last Updated", value: formatShortDate(getLastUpdatedTs(app)) },
+                      { label: "Source", value: app.source || "—" },
+                      { label: "Salary", value: app.salary ? `USD ${app.salary}` : "—" },
+                    ].map(({ label, value }) => (
+                      <div key={label} style={{ ...S.panel, padding: "12px 16px" }}>
+                        <div style={{ fontSize: 11, color: "var(--jt-muted)", fontWeight: 600, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Job Description */}
+                  {app.jobDescription && (
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Job Description</div>
+                      <div style={{
+                        ...S.panel, padding: 16,
+                        fontSize: 14, lineHeight: 1.7, color: "var(--jt-text)",
+                        whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto",
+                      }}>
+                        {app.jobDescription}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  {app.notes && (
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Notes</div>
+                      <div style={{ ...S.panel, padding: 16, fontSize: 14, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                        {app.notes}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Timeline */}
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Timeline</div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {(app.timeline || []).map((t: any, i: number) => (
+                        <div key={i} style={{
+                          display: "flex", alignItems: "center", gap: 12,
+                          padding: "10px 14px", background: "var(--jt-panel)",
+                          borderRadius: "var(--jt-radius)", fontSize: 14,
+                        }}>
+                          <div style={{
+                            width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                            background: STATUS_COLORS[t.status] || STATUS_COLORS.Applied,
+                            boxShadow: `0 0 8px ${STATUS_COLORS[t.status]}`,
+                          }} />
+                          <div style={{ flex: 1, fontWeight: 600 }}>{t.status}</div>
+                          <div style={{ color: "var(--jt-muted)", fontSize: 13 }}>{formatShortDate(t.ts)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Documents */}
+                  {app.documents && app.documents.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Documents</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {app.documents.map((doc: any, i: number) => (
+                          <button key={i} onClick={() => openDoc(doc)} style={{ ...S.button("secondary"), padding: "8px 14px", fontSize: 13 }}>
+                            <File size={14} /> {doc.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Delete Confirmation Dialog */}
         {deleteConfirmId && (
           <div className="jt-modal" style={{ zIndex: 1500 }}>
@@ -2339,6 +2457,17 @@ const handleAutofill = async () => {
                       </select>
                     </div>
                     <div>
+                      <label style={{ display: "block", marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Referral</label>
+                      <select
+                        value={formData.referral ?? "No"}
+                        onChange={(e) => setFormData((p) => ({ ...p, referral: e.target.value }))}
+                        style={S.input}
+                      >
+                        <option value="No">No</option>
+                        <option value="Yes">Yes</option>
+                      </select>
+                    </div>
+                    <div>
                       <label style={{ display: "block", marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Job URL</label>
                       <div style={{ display: "flex", gap: 8 }}>
                         <input
@@ -2357,6 +2486,16 @@ const handleAutofill = async () => {
                         </button>
                       </div>
                   </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: "block", marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Job Description</label>
+                    <textarea
+                      value={formData.jobDescription}
+                      onChange={(e) => setFormData((p) => ({ ...p, jobDescription: e.target.value }))}
+                      placeholder="Paste the job description here..."
+                      style={{ ...S.input, minHeight: 120, resize: "vertical", fontSize: 13 }}
+                    />
                   </div>
 
                   <div>
