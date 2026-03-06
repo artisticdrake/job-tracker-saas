@@ -43,6 +43,30 @@ app.post('/applications', requireAuth, async (req, res) => {
   res.json({ success: true, data });
 });
 
+// PUT: Update an existing application
+app.put('/applications/:id', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { id } = req.params;
+  const payload = req.body;
+  const authClient = getAuthClient(req.headers.authorization as string);
+
+  const { data, error } = await authClient
+    .from('applications')
+    .update({ ...payload, last_updated: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId)  // safety check — users can only edit their own
+    .select()
+    .single();
+
+  if (error) {
+    console.error("❌ Application Update Error:", error.message);
+    return res.status(400).json({ success: false, error: error.message });
+  }
+
+  console.log("✅ Application updated:", id);
+  res.json({ success: true, data });
+});
+
 // DELETE: Remove an application
 app.delete('/applications/:id', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
@@ -101,22 +125,42 @@ app.put('/profile', requireAuth, async (req, res) => {
   res.json({ success: true, data });
 });
 
-// DELETE: Wipe a user's profile row (triggered from danger zone)
+// DELETE: Full account wipe — deletes applications, profile row, then the auth user
 app.delete('/profile', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
   const authClient = getAuthClient(req.headers.authorization as string);
 
-  const { error } = await authClient
+  // Step 1: Delete all applications belonging to this user
+  const { error: appsError } = await authClient
+    .from('applications')
+    .delete()
+    .eq('user_id', userId);
+
+  if (appsError) {
+    console.error("❌ Failed to delete applications:", appsError.message);
+    return res.status(400).json({ success: false, error: appsError.message });
+  }
+
+  // Step 2: Delete the profile row
+  const { error: profileError } = await authClient
     .from('profiles')
     .delete()
     .eq('id', userId);
 
-  if (error) {
-    console.error("❌ Profile Delete Error:", error.message);
-    return res.status(400).json({ success: false, error: error.message });
+  if (profileError) {
+    console.error("❌ Failed to delete profile:", profileError.message);
+    return res.status(400).json({ success: false, error: profileError.message });
   }
 
-  console.log("✅ Profile deleted.");
+  // Step 3: Delete the auth user — requires service role key, NOT the user JWT
+  const { error: authError } = await supabase.auth.admin.deleteUser(userId);
+
+  if (authError) {
+    console.error("❌ Failed to delete auth user:", authError.message);
+    return res.status(400).json({ success: false, error: authError.message });
+  }
+
+  console.log(`✅ Account fully deleted for user ${userId}`);
   res.json({ success: true });
 });
 
