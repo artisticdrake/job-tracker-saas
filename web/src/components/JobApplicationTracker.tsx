@@ -32,6 +32,14 @@ import {
   Eye,
   EyeOff,
   LogOut,
+  User,
+  UserCircle2,
+  Camera,
+  Mail,
+  Calendar,
+  Shield,
+  Pencil,
+  AlertTriangle,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -191,6 +199,23 @@ function calculateConversionRate(apps: any[], fromStatus: string, toStatus: stri
 /** ---------- Theme system ---------- */
 // Theme key is scoped per-user to prevent cross-user localStorage leaks
 const getThemeKey = (userId: string) => `jt.theme.v4.${userId}`;
+const getProfileKey = (userId: string) => `jt.profile.v1.${userId}`;
+
+// Provided avatar options (emoji-based, theme-aware)
+const AVATAR_OPTIONS = [
+  { id: "rocket",    emoji: "🚀", label: "Rocket"    },
+  { id: "star",      emoji: "⭐", label: "Star"      },
+  { id: "fire",      emoji: "🔥", label: "Fire"      },
+  { id: "lightning", emoji: "⚡", label: "Lightning" },
+  { id: "diamond",   emoji: "💎", label: "Diamond"   },
+  { id: "crown",     emoji: "👑", label: "Crown"     },
+  { id: "ninja",     emoji: "🥷", label: "Ninja"     },
+  { id: "robot",     emoji: "🤖", label: "Robot"     },
+  { id: "alien",     emoji: "👾", label: "Alien"     },
+  { id: "fox",       emoji: "🦊", label: "Fox"       },
+  { id: "dragon",    emoji: "🐉", label: "Dragon"    },
+  { id: "owl",       emoji: "🦉", label: "Owl"       },
+];
 
 const DEFAULT_THEME = {
   mode: "dark",
@@ -458,6 +483,15 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [loading, setLoading] = useState(true);
 
   const userId: string = session?.user?.id ?? "";
+  const googleName: string = session?.user?.user_metadata?.full_name ?? session?.user?.email ?? "";
+  const googleEmail: string = session?.user?.email ?? "";
+
+  // Profile state
+  const [displayName, setDisplayName] = useState<string>("");
+  const [avatarId, setAvatarId] = useState<string>("rocket");
+  const [joinedAt, setJoinedAt] = useState<string | null>(null);
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [nameInput, setNameInput] = useState("");
 
   // Start with DEFAULT_THEME — fetchProfile will immediately replace this with either
   // the user's cloud-saved theme or Classic Blue. We do NOT load from localStorage here
@@ -603,6 +637,27 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     }
   };
 
+  const saveProfileMeta = async (name: string, avatar: string) => {
+    setDisplayName(name);
+    setAvatarId(avatar);
+    // persist locally too
+    try {
+      const cached = JSON.parse(localStorage.getItem(getProfileKey(userId)) || "{}");
+      localStorage.setItem(getProfileKey(userId), JSON.stringify({ ...cached, displayName: name, avatarId: avatar }));
+    } catch {}
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession) return;
+      await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${currentSession.access_token}` },
+        body: JSON.stringify({ display_name: name, avatar_id: avatar }),
+      });
+    } catch (error) {
+      console.error("Error saving profile meta:", error);
+    }
+  };
+
   const fetchProfile = async () => {
     if (!userId) return;
     try {
@@ -615,23 +670,61 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         setTheme(cached);
         setPreviewTheme(cached);
       }
+      // Also load cached profile meta
+      try {
+        const cachedMeta = JSON.parse(localStorage.getItem(getProfileKey(userId)) || "{}");
+        if (cachedMeta.displayName) setDisplayName(cachedMeta.displayName);
+        if (cachedMeta.avatarId) setAvatarId(cachedMeta.avatarId);
+      } catch {}
 
       const res = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
         headers: { Authorization: `Bearer ${currentSession.access_token}` },
       });
       const data = await res.json();
 
-      if (data?.success && data?.data?.theme_settings && Object.keys(data.data.theme_settings).length > 0) {
-        // Cloud is the source of truth — always wins over cache
-        const cloudTheme = data.data.theme_settings;
-        setTheme(cloudTheme);
-        setPreviewTheme(cloudTheme);
-        writeCachedTheme(userId, cloudTheme);
+      if (data?.success && data?.data) {
+        const profile = data.data;
+
+        // Theme — cloud is source of truth
+        if (profile.theme_settings && Object.keys(profile.theme_settings).length > 0) {
+          setTheme(profile.theme_settings);
+          setPreviewTheme(profile.theme_settings);
+          writeCachedTheme(userId, profile.theme_settings);
+        } else {
+          setTheme(DEFAULT_THEME);
+          setPreviewTheme(DEFAULT_THEME);
+          writeCachedTheme(userId, DEFAULT_THEME);
+        }
+
+        // Display name
+        if (profile.display_name) {
+          setDisplayName(profile.display_name);
+          try {
+            const cm = JSON.parse(localStorage.getItem(getProfileKey(userId)) || "{}");
+            localStorage.setItem(getProfileKey(userId), JSON.stringify({ ...cm, displayName: profile.display_name }));
+          } catch {}
+        } else {
+          // First login — no name yet, show the name prompt modal
+          setNameInput(googleName);
+          setShowNameModal(true);
+        }
+
+        // Avatar
+        if (profile.avatar_id) {
+          setAvatarId(profile.avatar_id);
+        }
+
+        // Joined date from profile created_at
+        if (profile.created_at) {
+          setJoinedAt(profile.created_at);
+        }
       } else {
-        // New user with no saved theme → force Classic Blue
+        // New user with no profile at all
         setTheme(DEFAULT_THEME);
         setPreviewTheme(DEFAULT_THEME);
         writeCachedTheme(userId, DEFAULT_THEME);
+        setNameInput(googleName);
+        setShowNameModal(true);
       }
     } catch (error) {
       console.error("Error fetching profile:", error);
@@ -1075,15 +1168,36 @@ const handleAutofill = async () => {
 
       <div style={{ maxWidth: 1600, margin: "0 auto", padding: 24 }}>
         {/* Header */}
-<div style={{ marginBottom: 32 }}>
+<div style={{ marginBottom: 32, position: "relative" }}>
   <h1 style={{ fontSize: 42, fontWeight: 900, margin: 0, marginBottom: 8, color: "var(--jt-title)", textShadow: `0 0 calc(50px * var(--jt-title-glow)) var(--jt-title)` }}>
-  Job Application Tracker
-</h1>
+    {displayName ? `Welcome, ${displayName} 👋` : "Job Application Tracker"}
+  </h1>
   <p style={{ color: "var(--jt-muted)", fontSize: 16, margin: 0, marginBottom: 16 }}>
     Powered by Qwen 2.5 Pro 
   </p>
-  <button onClick={handleLogout} style={S.button("secondary")}>
-    <LogOut size={16} /> Logout
+  {/* Avatar button — top right corner */}
+  <button
+    onClick={() => setActiveTab("profile")}
+    title="My Profile"
+    style={{
+      position: "absolute",
+      top: 0,
+      right: 0,
+      width: 48,
+      height: 48,
+      borderRadius: "50%",
+      border: "2px solid var(--jt-accent)",
+      background: "var(--jt-panel)",
+      cursor: "pointer",
+      fontSize: 24,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      boxShadow: `0 0 16px rgba(${hexToRgb(theme.palettes[theme.mode].accentGlow)}, calc(var(--jt-glow) * 0.5))`,
+      transition: "all 0.2s ease",
+    }}
+  >
+    {AVATAR_OPTIONS.find(a => a.id === avatarId)?.emoji ?? "🚀"}
   </button>
  {/* AI Summary */}
 {apps.length > 0 && (
@@ -1224,6 +1338,12 @@ const handleAutofill = async () => {
             onClick={() => setActiveTab("backup")}
           >
             <DatabaseBackup size={18} /> Backup
+          </button>
+          <button
+            className={`jt-tab ${activeTab === "profile" ? "active" : ""}`}
+            onClick={() => setActiveTab("profile")}
+          >
+            <User size={18} /> Profile
           </button>
         </div>
 
@@ -1719,6 +1839,87 @@ const handleAutofill = async () => {
           </div>
         )}
 
+        {/* Profile Tab */}
+        {activeTab === "profile" && (
+          <ProfileTab
+            displayName={displayName}
+            avatarId={avatarId}
+            googleEmail={googleEmail}
+            joinedAt={joinedAt}
+            appsCount={apps.length}
+            onSaveProfileMeta={saveProfileMeta}
+            onLogout={handleLogout}
+            onDeleteProfile={async () => {
+              try {
+                const { data: { session: cs } } = await supabase.auth.getSession();
+                if (cs) await fetch(`${import.meta.env.VITE_API_URL}/profile`, { method: "DELETE", headers: { Authorization: `Bearer ${cs.access_token}` } });
+              } catch {}
+              localStorage.removeItem(getProfileKey(userId));
+              localStorage.removeItem(getThemeKey(userId));
+              await supabase.auth.signOut();
+            }}
+            S={S}
+            theme={theme}
+          />
+        )}
+
+        {/* Welcome / Name Modal — shown on first login */}
+        {showNameModal && (
+          <div className="jt-modal" style={{ zIndex: 2000 }}>
+            <div className="jt-card" style={{ width: "min(480px, 100%)", padding: 40, textAlign: "center" }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>👋</div>
+              <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Welcome aboard!</div>
+              <div style={{ color: "var(--jt-muted)", fontSize: 15, marginBottom: 28 }}>
+                Let's set up your profile. What should we call you?
+              </div>
+              <input
+                autoFocus
+                placeholder="Enter your name"
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && nameInput.trim()) {
+                    saveProfileMeta(nameInput.trim(), avatarId);
+                    setShowNameModal(false);
+                  }
+                }}
+                style={{ ...S.input, fontSize: 16, textAlign: "center", marginBottom: 24 }}
+              />
+              <div style={{ fontSize: 14, color: "var(--jt-muted)", marginBottom: 16 }}>Pick an avatar</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 28 }}>
+                {AVATAR_OPTIONS.map(av => (
+                  <button
+                    key={av.id}
+                    title={av.label}
+                    onClick={() => setAvatarId(av.id)}
+                    style={{
+                      width: "100%", aspectRatio: "1", borderRadius: "50%",
+                      border: avatarId === av.id ? "2px solid var(--jt-accent)" : "2px solid var(--jt-border)",
+                      background: avatarId === av.id ? `rgba(${hexToRgb(theme.palettes[theme.mode].accentGlow)}, 0.15)` : "var(--jt-panel)",
+                      fontSize: 24, cursor: "pointer", transition: "all 0.2s ease",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    {av.emoji}
+                  </button>
+                ))}
+              </div>
+              <button
+                disabled={!nameInput.trim()}
+                onClick={() => {
+                  if (nameInput.trim()) {
+                    saveProfileMeta(nameInput.trim(), avatarId);
+                    setShowNameModal(false);
+                  }
+                }}
+                style={{ ...S.button("primary"), width: "100%", justifyContent: "center", padding: "14px 0", fontSize: 16, opacity: nameInput.trim() ? 1 : 0.5 }}
+              >
+                Let's go! 🚀
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Add/Edit Form Modal */}
         {showForm && (
           <div className="jt-modal">
@@ -2005,6 +2206,182 @@ const ColorInput = ({ label, value, onChange }) => (
     </div>
   </div>
 );
+/** ---------- Profile Tab Component ---------- */
+function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, onSaveProfileMeta, onLogout, onDeleteProfile, S, theme }: any) {
+  const [editingName, setEditingName] = useState(false);
+  const [localName, setLocalName] = useState(displayName);
+  const [localAvatar, setLocalAvatar] = useState(avatarId);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Sync local state when parent updates
+  useEffect(() => { setLocalName(displayName); }, [displayName]);
+  useEffect(() => { setLocalAvatar(avatarId); }, [avatarId]);
+
+  const memberDays = joinedAt
+    ? Math.floor((Date.now() - new Date(joinedAt).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const memberSince = joinedAt
+    ? new Date(joinedAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })
+    : "—";
+  const glowColor = hexToRgb(theme.palettes[theme.mode].accentGlow);
+
+  return (
+    <div style={{ maxWidth: 700, margin: "0 auto", display: "grid", gap: 24 }}>
+
+      {/* Identity Card */}
+      <div style={S.card}>
+        <div style={{ padding: 32 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 24, marginBottom: 28 }}>
+            <div style={{
+              width: 80, height: 80, borderRadius: "50%",
+              border: "3px solid var(--jt-accent)",
+              background: "var(--jt-panel)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 42, flexShrink: 0,
+              boxShadow: `0 0 24px rgba(${glowColor}, calc(var(--jt-glow) * 0.6))`,
+            }}>
+              {AVATAR_OPTIONS.find(a => a.id === localAvatar)?.emoji ?? "🚀"}
+            </div>
+            <div style={{ flex: 1 }}>
+              {editingName ? (
+                <input
+                  autoFocus
+                  value={localName}
+                  onChange={e => setLocalName(e.target.value)}
+                  style={{ ...S.input, fontSize: 22, fontWeight: 700, marginBottom: 8 }}
+                  onKeyDown={e => { if (e.key === "Enter") { onSaveProfileMeta(localName, localAvatar); setEditingName(false); } }}
+                />
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                  <span style={{ fontSize: 26, fontWeight: 800 }}>{displayName || "—"}</span>
+                  <button onClick={() => { setLocalName(displayName); setEditingName(true); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--jt-muted)", padding: 4 }}>
+                    <Pencil size={16} />
+                  </button>
+                </div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--jt-muted)", fontSize: 14 }}>
+                <Mail size={14} /> {googleEmail}
+              </div>
+            </div>
+            {editingName && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { onSaveProfileMeta(localName, localAvatar); setEditingName(false); }} style={S.button("primary")}>
+                  <Save size={15} /> Save
+                </button>
+                <button onClick={() => setEditingName(false)} style={S.button("secondary")}>
+                  <X size={15} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Stats row */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+            {[
+              { label: "Member Since", value: memberSince, icon: <Calendar size={18} /> },
+              { label: "Days Active", value: memberDays !== null ? `${memberDays} days` : "—", icon: <Clock size={18} /> },
+              { label: "Applications", value: appsCount, icon: <BarChart3 size={18} /> },
+            ].map(({ label, value, icon }) => (
+              <div key={label} style={{ ...S.panel, padding: "16px 20px", textAlign: "center" }}>
+                <div style={{ color: "var(--jt-accent)", marginBottom: 6, display: "flex", justifyContent: "center" }}>{icon}</div>
+                <div style={{ fontSize: 20, fontWeight: 800 }}>{value}</div>
+                <div style={{ color: "var(--jt-muted)", fontSize: 12, marginTop: 2 }}>{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Avatar Picker */}
+      <div style={S.card}>
+        <div style={{ padding: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <Camera size={20} /> Choose Your Avatar
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+            {AVATAR_OPTIONS.map(av => (
+              <button
+                key={av.id}
+                title={av.label}
+                onClick={() => { setLocalAvatar(av.id); onSaveProfileMeta(displayName, av.id); }}
+                style={{
+                  width: "100%", aspectRatio: "1", borderRadius: "50%",
+                  border: localAvatar === av.id ? "2px solid var(--jt-accent)" : "2px solid var(--jt-border)",
+                  background: localAvatar === av.id ? `rgba(${glowColor}, 0.15)` : "var(--jt-panel)",
+                  fontSize: 28, cursor: "pointer", transition: "all 0.2s ease",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: localAvatar === av.id ? `0 0 16px rgba(${glowColor}, 0.4)` : "none",
+                }}
+              >
+                {av.emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Account Settings */}
+      <div style={S.card}>
+        <div style={{ padding: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <Shield size={20} /> Account Settings
+          </div>
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ ...S.panel, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Sign-in Method</div>
+                <div style={{ color: "var(--jt-muted)", fontSize: 13, marginTop: 2 }}>Google OAuth</div>
+              </div>
+              <div style={{ padding: "4px 12px", borderRadius: 999, background: "rgba(52,211,153,0.12)", color: "#34d399", fontSize: 12, fontWeight: 600, border: "1px solid rgba(52,211,153,0.3)" }}>
+                Active
+              </div>
+            </div>
+            <div style={{ ...S.panel, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Data Storage</div>
+                <div style={{ color: "var(--jt-muted)", fontSize: 13, marginTop: 2 }}>Supabase (PostgreSQL) — encrypted at rest</div>
+              </div>
+              <div style={{ padding: "4px 12px", borderRadius: 999, background: "rgba(99,102,241,0.12)", color: "var(--jt-accent)", fontSize: 12, fontWeight: 600, border: "1px solid rgba(99,102,241,0.3)" }}>
+                Secure
+              </div>
+            </div>
+            <button onClick={onLogout} style={{ ...S.button("secondary"), justifyContent: "flex-start", padding: "14px 18px", borderRadius: "var(--jt-radius)", width: "100%" }}>
+              <LogOut size={16} /> Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div style={{ ...S.card, border: "1px solid rgba(248,113,113,0.35)" }}>
+        <div style={{ padding: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, color: "#f87171", display: "flex", alignItems: "center", gap: 10 }}>
+            <AlertTriangle size={20} /> Danger Zone
+          </div>
+          {!showDeleteConfirm ? (
+            <button onClick={() => setShowDeleteConfirm(true)} style={{ ...S.button("secondary"), border: "1px solid rgba(248,113,113,0.5)", color: "#f87171" }}>
+              <Trash2 size={16} /> Delete My Profile & All Data
+            </button>
+          ) : (
+            <div style={{ ...S.panel, padding: 20, border: "1px solid rgba(248,113,113,0.4)" }}>
+              <p style={{ margin: "0 0 16px", fontSize: 14, color: "var(--jt-muted)" }}>
+                This will permanently delete your profile settings. Your applications will remain until you remove them manually. This cannot be undone.
+              </p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={onDeleteProfile} style={{ ...S.button("secondary"), border: "1px solid rgba(248,113,113,0.5)", color: "#f87171" }}>
+                  Yes, delete everything
+                </button>
+                <button onClick={() => setShowDeleteConfirm(false)} style={S.button("secondary")}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 /** ---------- Customization Tab Component ---------- */
 function CustomizationTab({previewTheme, 
   setPreviewTheme, 

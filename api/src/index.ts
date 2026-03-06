@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-// 1. Import getAuthClient alongside supabase
 import { supabase, getAuthClient } from './lib/supabase';
 import { requireAuth } from './middleware/auth';
 
@@ -16,10 +15,9 @@ app.use(express.json());
 // GET: Fetch all applications for the logged-in user
 app.get('/applications', requireAuth, async (req, res) => {
   const userId = (req as any).user.id; 
-  // 2. Create an authenticated client using the user's token
   const authClient = getAuthClient(req.headers.authorization as string);
 
-  const { data, error } = await authClient // <-- Use authClient instead of supabase
+  const { data, error } = await authClient
     .from('applications')
     .select('*')
     .eq('user_id', userId)
@@ -33,11 +31,9 @@ app.get('/applications', requireAuth, async (req, res) => {
 app.post('/applications', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
   const payload = req.body;
-  
-  // 2. Create an authenticated client using the user's token
   const authClient = getAuthClient(req.headers.authorization as string);
 
-  const { data, error } = await authClient // <-- Use authClient instead of supabase
+  const { data, error } = await authClient
     .from('applications')
     .insert([{ ...payload, user_id: userId }])
     .select()
@@ -51,11 +47,9 @@ app.post('/applications', requireAuth, async (req, res) => {
 app.delete('/applications/:id', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
   const { id } = req.params;
-  
-  // 2. Create an authenticated client using the user's token
   const authClient = getAuthClient(req.headers.authorization as string);
 
-  const { error } = await authClient // <-- Use authClient instead of supabase
+  const { error } = await authClient
     .from('applications')
     .delete()
     .eq('id', id)
@@ -64,14 +58,15 @@ app.delete('/applications/:id', requireAuth, async (req, res) => {
   if (error) return res.status(400).json({ success: false, error: error.message });
   res.json({ success: true });
 });
-// GET: Fetch user profile (Theme settings, etc.)
+
+// GET: Fetch user profile — returns theme_settings, display_name, avatar_id, created_at
 app.get('/profile', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
   const authClient = getAuthClient(req.headers.authorization as string);
 
   const { data, error } = await authClient
     .from('profiles')
-    .select('*')
+    .select('id, theme_settings, display_name, avatar_id, created_at') // ← explicit columns
     .eq('id', userId)
     .single();
 
@@ -79,16 +74,21 @@ app.get('/profile', requireAuth, async (req, res) => {
   res.json({ success: true, data });
 });
 
-// PUT: Update user profile
+// PUT: Update user profile — accepts theme_settings, display_name, avatar_id
 app.put('/profile', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
-  const { theme_settings } = req.body;
+  const { theme_settings, display_name, avatar_id } = req.body; // ← destructure all three
   const authClient = getAuthClient(req.headers.authorization as string);
 
-  // UPSERT: "Update it if it exists, create it if it doesn't"
+  // Build the update payload — only include fields that were actually sent
+  const payload: Record<string, any> = { id: userId };
+  if (theme_settings !== undefined) payload.theme_settings = theme_settings;
+  if (display_name  !== undefined) payload.display_name  = display_name;
+  if (avatar_id     !== undefined) payload.avatar_id     = avatar_id;
+
   const { data, error } = await authClient
     .from('profiles')
-    .upsert({ id: userId, theme_settings }) 
+    .upsert(payload)
     .select()
     .single();
 
@@ -99,6 +99,25 @@ app.put('/profile', requireAuth, async (req, res) => {
   
   console.log("✅ Profile saved successfully!");
   res.json({ success: true, data });
+});
+
+// DELETE: Wipe a user's profile row (triggered from danger zone)
+app.delete('/profile', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const authClient = getAuthClient(req.headers.authorization as string);
+
+  const { error } = await authClient
+    .from('profiles')
+    .delete()
+    .eq('id', userId);
+
+  if (error) {
+    console.error("❌ Profile Delete Error:", error.message);
+    return res.status(400).json({ success: false, error: error.message });
+  }
+
+  console.log("✅ Profile deleted.");
+  res.json({ success: true });
 });
 
 app.listen(PORT, () => {
