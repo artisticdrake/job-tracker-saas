@@ -2405,6 +2405,7 @@ function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, o
     </div>
   );
 }
+/** ---------- Appearance Tab Component ---------- *
 
 /** ---------- Customization Tab Component ---------- */
 function CustomizationTab({previewTheme, 
