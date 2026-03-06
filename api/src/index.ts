@@ -64,6 +64,42 @@ app.delete('/applications/:id', requireAuth, async (req, res) => {
   if (error) return res.status(400).json({ success: false, error: error.message });
   res.json({ success: true });
 });
+// GET: Fetch user profile (Theme settings, etc.)
+app.get('/profile', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const authClient = getAuthClient(req.headers.authorization as string);
+
+  const { data, error } = await authClient
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error) return res.status(400).json({ success: false, error: error.message });
+  res.json({ success: true, data });
+});
+
+// PUT: Update user profile
+app.put('/profile', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { theme_settings } = req.body;
+  const authClient = getAuthClient(req.headers.authorization as string);
+
+  // UPSERT: "Update it if it exists, create it if it doesn't"
+  const { data, error } = await authClient
+    .from('profiles')
+    .upsert({ id: userId, theme_settings }) 
+    .select()
+    .single();
+
+  if (error) {
+    console.error("❌ Profile Save Error:", error.message);
+    return res.status(400).json({ success: false, error: error.message });
+  }
+  
+  console.log("✅ Profile saved successfully!");
+  res.json({ success: true, data });
+});
 
 app.listen(PORT, () => {
   console.log(`API Server running on http://localhost:${PORT}`);

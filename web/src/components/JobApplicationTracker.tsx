@@ -189,34 +189,34 @@ function calculateConversionRate(apps: any[], fromStatus: string, toStatus: stri
 }
 
 /** ---------- Theme system ---------- */
-const THEME_KEY = "jt.theme.v3";
+const THEME_KEY = "jt.theme.v4";
 
 const DEFAULT_THEME = {
   mode: "dark",
-  radius: 16,
+  radius: 14,
   density: 1.0,
   fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
-  glowIntensity: 0.6,
-  titleGlow: 0.6,
-  titleColor: "#6366f1",
+  glowIntensity: 0.0,
+  titleGlow: 0.06,
+  titleColor: "#ffffff",
   palettes: {
     dark: {
-      accent: "#6366f1",
-      accentGlow: "#6366f1",
-      bg: "#0a0a0f",
-      panel: "#131318",
-      border: "#27272a",
-      text: "#fafafa",
-      muted: "#a1a1aa",
+      accent: "#ff0000",
+      accentGlow: "#60a5fa",
+      bg: "#030712",
+      panel: "#0f1729",
+      border: "#1e3a8a",
+      text: "#dbeafe",
+      muted: "#93c5fd",
     },
     light: {
-      accent: "#6366f1",
-      accentGlow: "#6366f1",
-      bg: "#fafafa",
-      panel: "#ffffff",
-      border: "#e4e4e7",
-      text: "#18181b",
-      muted: "#71717a",
+      accent: "#ff0000",
+      accentGlow: "#60a5fa",
+      bg: "#030712",
+      panel: "#0f1729",
+      border: "#1e3a8a",
+      text: "#dbeafe",
+      muted: "#93c5fd",
     },
   },
 };
@@ -420,9 +420,33 @@ function loadTheme() {
   }
 }
 
-function saveTheme(t: any) {
-  localStorage.setItem(THEME_KEY, JSON.stringify(t));
-}
+const CLASSIC_BLUE_THEME =
+  BEAUTIFUL_PRESETS.find((p) => p.name === "Classic Blue")?.theme ?? DEFAULT_THEME;
+
+
+const saveTheme = async (t: any) => {
+    setTheme(t);
+    localStorage.setItem(THEME_KEY, JSON.stringify(t)); // <-- Local cache for instant loads
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}` 
+        },
+        body: JSON.stringify({ theme_settings: t })
+      });
+      
+      const result = await response.json();
+      console.log("Cloud Save Response:", result);
+    } catch (error) {
+      console.error("Error saving theme to cloud:", error);
+    }
+  };
 
 function applyThemeToDom(t: any) {
   const pal = t.palettes[t.mode];
@@ -493,7 +517,6 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
   useEffect(() => {
     applyThemeToDom(theme);
-    saveTheme(theme);
   }, [theme]);
 
   useEffect(() => {
@@ -524,7 +547,6 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       setLoading(false);
       return;
     }
-
     setLoading(true);
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/applications`, {
@@ -568,16 +590,43 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     }
   };
 
+  const fetchProfile = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      
+      if (data?.success && data?.data?.theme_settings && Object.keys(data.data.theme_settings).length > 0) {
+        // Cloud theme found: Apply it
+        setTheme(data.data.theme_settings);
+        localStorage.setItem(THEME_KEY, JSON.stringify(data.data.theme_settings));
+      } else {
+        // NO cloud theme found (New User): Force the Classic Blue default
+        setTheme(DEFAULT_THEME);
+        localStorage.setItem(THEME_KEY, JSON.stringify(DEFAULT_THEME));
+      }
+    } catch (error) {
+      console.error("Error fetching profile:", error);
+    }
+  };
+  
   useEffect(() => {
-    fetchApps();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (session?.access_token) {
+      fetchApps();
+      fetchProfile();
+    }
   }, [session]);
 
   const handleApplyTheme = () => {
-  setTheme(previewTheme);
-  setShowSaveSuccess(true);
-  setTimeout(() => setShowSaveSuccess(false), 3000); // Hide after 3 seconds
-};
+    setTheme(previewTheme);
+    saveTheme(previewTheme); // <-- ONLY save when the user clicks this button
+    setShowSaveSuccess(true);
+    setTimeout(() => setShowSaveSuccess(false), 3000);
+  };
 
   const handleResetPreview = () => {
     setPreviewTheme(theme);
