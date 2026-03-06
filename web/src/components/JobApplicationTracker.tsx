@@ -534,6 +534,12 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [aiSummary, setAiSummary] = useState("");
   const [loadingSummary, setLoadingSummary] = useState(false);
 
+  // Resume vault state
+  const [resumes, setResumes] = useState<any[]>([]);
+  const [resumesLoading, setResumesLoading] = useState(false);
+  const [resumeUploading, setResumeUploading] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
   const generateAiSummary = async () => {
   // Tier 4: AI summaries (server-side). Disabled in Tier 0 web SaaS scope.
   return;
@@ -679,6 +685,18 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
         headers: { Authorization: `Bearer ${currentSession.access_token}` },
       });
+
+      // 400/404 means no profile row exists (e.g. after account deletion + re-signup)
+      // Treat this as a brand new user
+      if (!res.ok) {
+        setTheme(DEFAULT_THEME);
+        setPreviewTheme(DEFAULT_THEME);
+        writeCachedTheme(userId, DEFAULT_THEME);
+        setNameInput(googleName);
+        setShowNameModal(true);
+        return;
+      }
+
       const data = await res.json();
 
       if (data?.success && data?.data) {
@@ -726,7 +744,13 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         setShowNameModal(true);
       }
     } catch (error) {
-      console.error("Error fetching profile:", error);
+      // Treat any error (including 400 "no rows found" after account deletion)
+      // as a new user — show the welcome modal so they can set up fresh
+      console.error("Error fetching profile — treating as new user:", error);
+      setTheme(DEFAULT_THEME);
+      setPreviewTheme(DEFAULT_THEME);
+      setNameInput(googleName);
+      setShowNameModal(true);
     }
   };
   
@@ -1001,17 +1025,9 @@ const handleAutofill = async () => {
   const exportCsv = () => {
     const headers = ["Company", "Position", "Location", "Salary", "Date Applied", "Status", "Source", "Job URL", "Notes"];
     const rows = apps.map((a) => [
-      a.company,
-      a.position,
-      a.location,
-      a.salary,
-      a.dateApplied,
-      a.status,
-      a.source,
-      a.jobUrl,
-      a.notes,
+      a.company, a.position, a.location, a.salary, a.dateApplied,
+      a.status, a.source, a.jobUrl, a.notes,
     ]);
-
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c || "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -1020,6 +1036,103 @@ const handleAutofill = async () => {
     a.download = `job-applications-${todayISO()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const fetchResumes = async () => {
+    if (!session?.access_token) return;
+    setResumesLoading(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/resumes`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.success) setResumes(data.data || []);
+    } catch (err) {
+      console.error("Failed to fetch resumes:", err);
+    } finally {
+      setResumesLoading(false);
+    }
+  };
+
+  const handleResumeUpload = async (file: File) => {
+    setResumeError(null);
+    const allowed = ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+    if (!allowed.includes(file.type)) {
+      setResumeError("Only PDF, DOC, and DOCX files are accepted.");
+      return;
+    }
+    if (resumes.length >= 3) {
+      setResumeError("You've reached the 3-resume limit. Delete one to upload a new one.");
+      return;
+    }
+    setResumeUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = (e.target?.result as string).split(",")[1];
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/resumes`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileType: file.type,
+            fileData: base64,
+            fileSize: file.size,
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          await fetchResumes();
+        } else {
+          setResumeError(data.error || "Upload failed.");
+        }
+        setResumeUploading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      setResumeError(err?.message || "Upload failed.");
+      setResumeUploading(false);
+    }
+  };
+
+  const handleResumeDelete = async (id: string) => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/resumes/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResumes((prev) => prev.filter((r) => r.id !== id));
+      } else {
+        setResumeError(data.error || "Delete failed.");
+      }
+    } catch (err: any) {
+      setResumeError(err?.message || "Delete failed.");
+    }
+  };
+
+  const handleResumeDownload = async (id: string) => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/resumes/${id}/download`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        const a = document.createElement("a");
+        a.href = data.url;
+        a.download = data.fileName;
+        a.target = "_blank";
+        a.click();
+      } else {
+        setResumeError(data.error || "Download failed.");
+      }
+    } catch (err: any) {
+      setResumeError(err?.message || "Download failed.");
+    }
   };
 
   const S = {
@@ -1311,9 +1424,9 @@ const handleAutofill = async () => {
           </button>
           <button
             className={`jt-tab ${activeTab === "files" ? "active" : ""}`}
-            onClick={() => setActiveTab("files")}
+            onClick={() => { setActiveTab("files"); fetchResumes(); }}
           >
-            <Files size={18} /> Files
+            <Files size={18} /> Resumes
           </button>
           <button
             className={`jt-tab ${activeTab === "analytics" ? "active" : ""}`}
@@ -1573,62 +1686,198 @@ const handleAutofill = async () => {
         {/* Files Tab */}
         {activeTab === "files" && (
           <div style={{ display: "grid", gap: 24 }}>
-            {Object.keys(filesByCompany).length === 0 ? (
-              <div style={{ ...S.panel, padding: 48, textAlign: "center" }}>
-                <FolderOpen size={48} style={{ color: "var(--jt-muted)", margin: "0 auto 16px" }} />
-                <div style={{ fontSize: 18, color: "var(--jt-muted)" }}>No files attached yet</div>
-              </div>
-            ) : (
-              Object.entries(filesByCompany).map(([company, roles]) => (
-                <div key={company} style={S.card}>
-                  <div style={{ padding: 20, borderBottom: "1px solid var(--jt-border)" }}>
-                    <h3 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{company}</h3>
+
+            {/* Resume Vault */}
+            <div style={S.card}>
+              <div style={{ padding: 28 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
+                    <File size={22} /> Resume Vault
                   </div>
-                  <div style={{ padding: 20 }}>
-                    {Object.entries(roles).map(([position, docs]) => (
-                      <div key={position} style={{ marginBottom: 24, paddingBottom: 29, borderBottom: "1px solid var(--jt-border)" }}>
-                        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: "var(--jt-accent)" }}>
-                          {position}
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12 }}>
-                          {docs.map((doc, i) => (
-                            <div
-                              key={i}
-                              onClick={() => openDoc(doc)}
-                              style={{
-                                ...S.panel,
-                                padding: 14,
-                                cursor: "pointer",
-                                transition: "all 0.2s ease",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 12,
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.transform = "translateY(-2px)";
-                                e.currentTarget.style.borderColor = "var(--jt-accent)";
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.transform = "translateY(0)";
-                                e.currentTarget.style.borderColor = "var(--jt-border)";
-                              }}
-                            >
-                              <File size={25} color="var(--jt-accent)" />
-                              <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{cleanFileName(doc.name)}</div>
-                                <div style={{ fontSize: 12, color: "var(--jt-muted)" }}>
-                                  {formatLocalYYYYMMDDToLocale(doc.dateApplied)}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                  <div style={{
+                    fontSize: 13, color: "var(--jt-muted)",
+                    padding: "4px 12px", borderRadius: 999,
+                    border: "1px solid var(--jt-border)",
+                    background: "var(--jt-panel)",
+                  }}>
+                    {resumes.length} / 3 slots used
                   </div>
                 </div>
-              ))
+                <div style={{ color: "var(--jt-muted)", fontSize: 13, marginBottom: 24 }}>
+                  Store up to 3 resumes. Accepted formats: PDF, DOC, DOCX.
+                </div>
+
+                {/* Error banner */}
+                {resumeError && (
+                  <div style={{
+                    padding: "12px 16px", borderRadius: "var(--jt-radius)",
+                    background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.4)",
+                    color: "#f87171", fontSize: 14, marginBottom: 20,
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                  }}>
+                    {resumeError}
+                    <button onClick={() => setResumeError(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#f87171" }}>
+                      <X size={16} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Resume slots */}
+                {resumesLoading ? (
+                  <div style={{ color: "var(--jt-muted)", fontSize: 14, padding: "24px 0", textAlign: "center" }}>
+                    Loading resumes...
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 12, marginBottom: 20 }}>
+                    {resumes.map((resume) => {
+                      const ext = resume.file_name.split(".").pop()?.toUpperCase();
+                      const sizeKb = resume.file_size ? `${(resume.file_size / 1024).toFixed(1)} KB` : "";
+                      const uploadedDate = new Date(resume.uploaded_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+                      const extColor = ext === "PDF" ? "#f87171" : "#60a5fa";
+
+                      return (
+                        <div key={resume.id} style={{
+                          ...S.panel,
+                          padding: "16px 20px",
+                          display: "flex", alignItems: "center", gap: 16,
+                          transition: "all 0.2s ease",
+                        }}>
+                          {/* File type badge */}
+                          <div style={{
+                            width: 44, height: 44, borderRadius: 10,
+                            background: `${extColor}18`,
+                            border: `1px solid ${extColor}40`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 11, fontWeight: 800, color: extColor, flexShrink: 0,
+                          }}>
+                            {ext}
+                          </div>
+
+                          {/* File info */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {resume.file_name}
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--jt-muted)" }}>
+                              {sizeKb}{sizeKb && " · "}Uploaded {uploadedDate}
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                            <button
+                              onClick={() => handleResumeDownload(resume.id)}
+                              title="Download"
+                              style={{ ...S.button("secondary"), padding: "8px 14px", fontSize: 13 }}
+                            >
+                              <ExternalLink size={15} /> View
+                            </button>
+                            <button
+                              onClick={() => handleResumeDelete(resume.id)}
+                              title="Delete"
+                              style={{ ...S.button("secondary"), padding: "8px 12px", border: "1px solid rgba(248,113,113,0.4)", color: "#f87171" }}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Empty slots */}
+                    {Array.from({ length: 3 - resumes.length }).map((_, i) => (
+                      <label key={`empty-${i}`} style={{
+                        ...S.panel,
+                        padding: "16px 20px",
+                        display: "flex", alignItems: "center", gap: 16,
+                        cursor: resumeUploading ? "not-allowed" : "pointer",
+                        border: "1px dashed var(--jt-border)",
+                        opacity: resumeUploading ? 0.6 : 1,
+                        transition: "all 0.2s ease",
+                      }}
+                        onMouseEnter={(e) => { if (!resumeUploading) e.currentTarget.style.borderColor = "var(--jt-accent)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--jt-border)"; }}
+                      >
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx"
+                          style={{ display: "none" }}
+                          disabled={resumeUploading}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleResumeUpload(file);
+                            e.target.value = "";
+                          }}
+                        />
+                        <div style={{
+                          width: 44, height: 44, borderRadius: 10,
+                          background: "var(--jt-panel)",
+                          border: "1px dashed var(--jt-border)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          flexShrink: 0,
+                        }}>
+                          {resumeUploading && i === 0 ? (
+                            <div style={{ width: 16, height: 16, border: "2px solid var(--jt-accent)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                          ) : (
+                            <Upload size={18} color="var(--jt-muted)" />
+                          )}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--jt-muted)" }}>
+                            {resumeUploading && i === 0 ? "Uploading..." : "Empty slot — click to upload"}
+                          </div>
+                          <div style={{ fontSize: 12, color: "var(--jt-muted)", marginTop: 2 }}>PDF, DOC, DOCX</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Application Documents (existing) */}
+            {Object.keys(filesByCompany).length > 0 && (
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, color: "var(--jt-muted)" }}>
+                  Application Documents
+                </div>
+                {Object.entries(filesByCompany).map(([company, roles]) => (
+                  <div key={company} style={{ ...S.card, marginBottom: 16 }}>
+                    <div style={{ padding: 20, borderBottom: "1px solid var(--jt-border)" }}>
+                      <h3 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{company}</h3>
+                    </div>
+                    <div style={{ padding: 20 }}>
+                      {Object.entries(roles).map(([position, docs]: any) => (
+                        <div key={position} style={{ marginBottom: 20 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: "var(--jt-accent)" }}>{position}</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 10 }}>
+                            {docs.map((doc: any, i: number) => (
+                              <div key={i} onClick={() => openDoc(doc)} style={{
+                                ...S.panel, padding: 14, cursor: "pointer",
+                                display: "flex", alignItems: "center", gap: 12,
+                                transition: "all 0.2s ease",
+                              }}
+                                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--jt-accent)"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--jt-border)"; }}
+                              >
+                                <File size={22} color="var(--jt-accent)" />
+                                <div>
+                                  <div style={{ fontSize: 13, fontWeight: 600 }}>{cleanFileName(doc.name)}</div>
+                                  <div style={{ fontSize: 11, color: "var(--jt-muted)", marginTop: 2 }}>{formatLocalYYYYMMDDToLocale(doc.dateApplied)}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
+
+            {/* Spinner keyframe */}
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </div>
         )}
 
@@ -2405,7 +2654,6 @@ function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, o
     </div>
   );
 }
-/** ---------- Appearance Tab Component ---------- *
 
 /** ---------- Customization Tab Component ---------- */
 function CustomizationTab({previewTheme, 
