@@ -3,11 +3,19 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { supabase, getAuthClient } from './lib/supabase';
 import { requireAuth } from './middleware/auth';
+import OpenAI from 'openai';
 
-dotenv.config();
+dotenv.config({ path: require('path').resolve(__dirname, '../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+const openai = new OpenAI({ apiKey: (process.env.OPENAI_API_KEY2 || '').trim() });
+
+// helper — lazy OpenAI client that always reads the key fresh
+function getOpenAI() {
+  return new OpenAI({ apiKey: (process.env.OPENAI_API_KEY2 || '').trim() });
+}
 
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
@@ -315,6 +323,584 @@ app.delete('/resumes/:id', requireAuth, async (req, res) => {
 
   console.log('Resume deleted:', id);
   res.json({ success: true });
+});
+
+// ─── RESUME PARSING ──────────────────────────────────────────────────────────
+
+// POST: Parse a resume after upload — extract text, compute hash, set active
+// Body: { setActive?: boolean }
+app.post('/resumes/:id/parse', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { id } = req.params;
+  const { setActive = false } = req.body;
+
+  // Verify ownership + get storage path
+  const { data: resume, error: fetchError } = await supabase
+    .from('resumes')
+    .select('id, storage_path, file_name')
+    .eq('id', id)
+    .eq('user_id', userId)
+    .single();
+
+  if (fetchError || !resume) {
+    return res.status(404).json({ success: false, error: 'Resume not found' });
+  }
+
+  try {
+    // Download file from Supabase Storage into memory
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from('resumes')
+      .download(resume.storage_path);
+
+    if (downloadError || !blob) {
+      return res.status(400).json({ success: false, error: 'Failed to download resume from storage' });
+    }
+
+    const arrayBuffer = await blob.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuffer);
+    const ext = resume.file_name.split('.').pop()?.toLowerCase();
+
+    // Extract text based on file type
+    let rawText = '';
+
+    if (ext === 'pdf') {
+      const { PDFParse } = require('pdf-parse');
+      const parser = new PDFParse({ data: fileBuffer, verbosity: 0 });
+      const result = await parser.getText();
+      rawText = result.text;
+    } else if (ext === 'docx') {
+      const mammoth = require('mammoth');
+      const result = await mammoth.extractRawText({ buffer: fileBuffer });
+      rawText = result.value;
+    } else if (ext === 'doc') {
+      // Basic fallback for .doc — extract readable ASCII text
+      rawText = fileBuffer.toString('utf-8').replace(/[^\x20-\x7E\n]/g, ' ');
+    } else if (ext === 'txt') {
+      rawText = fileBuffer.toString('utf-8');
+    } else {
+      return res.status(400).json({ success: false, error: `Unsupported file type: .${ext}` });
+    }
+
+    // Normalize text
+    const normalizedText = rawText
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+/g, ' ')
+      .trim();
+
+    if (normalizedText.length < 100) {
+      return res.status(422).json({
+        success: false,
+        error: 'Could not extract enough text. Please upload a text-based PDF (not a scanned image).',
+      });
+    }
+
+    // Compute hash
+    const crypto = require('crypto');
+    const resumeHash = crypto
+      .createHash('sha256')
+      .update(normalizedText.toLowerCase())
+      .digest('hex')
+      .slice(0, 32);
+
+    // If setActive, deactivate all others first
+    if (setActive) {
+      await supabase
+        .from('resumes')
+        .update({ is_active: false })
+        .eq('user_id', userId);
+    }
+
+    // Save extracted text + hash to DB
+    const { data: updated, error: updateError } = await supabase
+      .from('resumes')
+      .update({
+        extracted_text: normalizedText,
+        resume_hash: resumeHash,
+        ...(setActive ? { is_active: true } : {}),
+      })
+      .eq('id', id)
+      .select('id, file_name, resume_hash, is_active, uploaded_at, file_size')
+      .single();
+
+    if (updateError) {
+      return res.status(400).json({ success: false, error: updateError.message });
+    }
+
+    console.log(`Resume parsed: ${id} | ${normalizedText.length} chars | hash: ${resumeHash}`);
+    res.json({
+      success: true,
+      data: updated,
+      charCount: normalizedText.length,
+      wordCount: normalizedText.split(/\s+/).filter(Boolean).length,
+    });
+  } catch (err: any) {
+    console.error('Parse error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH: Set a resume as active
+app.patch('/resumes/:id/active', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { id } = req.params;
+
+  // Verify ownership
+  const { data: resume } = await supabase
+    .from('resumes')
+    .select('id')
+    .eq('id', id)
+    .eq('user_id', userId)
+    .single();
+
+  if (!resume) return res.status(404).json({ success: false, error: 'Resume not found' });
+
+  // Deactivate all, then activate this one
+  await supabase.from('resumes').update({ is_active: false }).eq('user_id', userId);
+  await supabase.from('resumes').update({ is_active: true }).eq('id', id);
+
+  res.json({ success: true });
+});
+
+// ─── MATCHING ─────────────────────────────────────────────────────────────────
+
+// Skill dictionaries for deterministic scoring
+const TECH_SKILLS = new Set([
+  'python','javascript','typescript','java','c++','c#','go','rust','scala','kotlin','swift','r','matlab',
+  'pytorch','tensorflow','keras','scikit-learn','huggingface','transformers','nlp','computer vision',
+  'deep learning','machine learning','reinforcement learning','neural network','bert','gpt','langchain',
+  'rag','vector database','embeddings','openai','sql','postgresql','mysql','mongodb','redis',
+  'elasticsearch','spark','kafka','airflow','dbt','pandas','numpy','tableau','powerbi','bigquery',
+  'snowflake','databricks','aws','gcp','azure','docker','kubernetes','terraform','github actions',
+  'react','next.js','node.js','express','fastapi','django','flask','graphql','rest api','git','linux',
+]);
+
+const SOFT_SKILLS = new Set([
+  'communication','leadership','collaboration','problem solving','agile','scrum',
+  'cross-functional','stakeholder','mentoring','ownership',
+]);
+
+function extractSkills(text: string): { tech: Set<string>; soft: Set<string> } {
+  const lower = text.toLowerCase();
+  const tech = new Set<string>();
+  const soft = new Set<string>();
+  for (const s of TECH_SKILLS) if (lower.includes(s)) tech.add(s);
+  for (const s of SOFT_SKILLS) if (lower.includes(s)) soft.add(s);
+  return { tech, soft };
+}
+
+function extractRequiredSkills(jdText: string): Set<string> {
+  const lower = jdText.toLowerCase();
+  const reqMatch = lower.match(/(?:required|must.have|minimum requirements?|qualifications?)[:\s]+([\s\S]{0,800})/i);
+  const searchText = reqMatch ? reqMatch[1] : lower;
+  const required = new Set<string>();
+  for (const s of TECH_SKILLS) if (searchText.includes(s)) required.add(s);
+  return required.size > 0 ? required : extractSkills(jdText).tech;
+}
+
+function extractYears(text: string): number | null {
+  const patterns = [
+    /(\d+)\+?\s*years?\s+of\s+experience/gi,
+    /(\d+)\+?\s*years?\s+experience/gi,
+    /minimum\s+(\d+)\s*years?/gi,
+  ];
+  for (const p of patterns) {
+    p.lastIndex = 0;
+    const m = p.exec(text);
+    if (m) return parseInt(m[1], 10);
+  }
+  return null;
+}
+
+function computeScore(resumeText: string, jdText: string) {
+  const resumeSkills = extractSkills(resumeText);
+  const jdSkills = extractSkills(jdText);
+  const jdRequired = extractRequiredSkills(jdText);
+
+  // Required skill overlap (35 pts)
+  const skillOverlap = jdRequired.size === 0 ? 18
+    : Math.round(([...jdRequired].filter(s => resumeSkills.tech.has(s)).length / jdRequired.size) * 35);
+
+  // Stack overlap (25 pts)
+  const stackOverlap = jdSkills.tech.size === 0 ? 12
+    : Math.round(([...jdSkills.tech].filter(s => resumeSkills.tech.has(s)).length / jdSkills.tech.size) * 25);
+
+  // Title similarity (20 pts) — check if JD title tokens appear in resume
+  const firstLine = jdText.slice(0, 200).split('\n')[0] || '';
+  const titleTokens = firstLine.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(t => t.length > 3);
+  const resumeLower = resumeText.toLowerCase();
+  const titleHits = titleTokens.filter(t => resumeLower.includes(t)).length;
+  const titleSimilarity = titleTokens.length > 0
+    ? Math.round(Math.min(1, titleHits / titleTokens.length) * 20) : 10;
+
+  // Experience gap penalty (max -15)
+  const jdYears = extractYears(jdText);
+  const resumeYears = extractYears(resumeText);
+  let experienceGap = 0;
+  if (jdYears !== null && resumeYears !== null) {
+    const gap = jdYears - resumeYears;
+    if (gap > 2) experienceGap = -15;
+    else if (gap > 1) experienceGap = -10;
+    else if (gap > 0) experienceGap = -5;
+  }
+
+  // Soft skills (5 pts)
+  const softSkills = jdSkills.soft.size === 0 ? 2
+    : Math.round(([...jdSkills.soft].filter(s => resumeSkills.soft.has(s)).length / jdSkills.soft.size) * 5);
+
+  const total = Math.max(0, Math.min(100, skillOverlap + stackOverlap + titleSimilarity + experienceGap + softSkills));
+
+  return {
+    score: Math.round(total),
+    breakdown: { skillOverlap, stackOverlap, titleSimilarity, experienceGap, softSkills },
+    matchedSkills: [...jdSkills.tech].filter(s => resumeSkills.tech.has(s)),
+    missingSkills: [...jdRequired].filter(s => !resumeSkills.tech.has(s)),
+  };
+}
+
+// POST: Run match (or return cached result)
+// Body: { applicationId: string, jdText: string, resumeId?: string }
+app.post('/match', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { applicationId, jdText, resumeId } = req.body;
+
+  if (!applicationId) return res.status(400).json({ success: false, error: 'applicationId is required' });
+  if (!jdText || jdText.trim().length < 50) {
+    return res.status(400).json({ success: false, error: 'jdText must be at least 50 characters' });
+  }
+
+  // Verify app ownership
+  const { data: app } = await supabase
+    .from('applications')
+    .select('id')
+    .eq('id', applicationId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!app) return res.status(404).json({ success: false, error: 'Application not found' });
+
+  // Resolve resume — use specified or active one
+  let resumeQuery = supabase
+    .from('resumes')
+    .select('id, extracted_text, resume_hash, file_name')
+    .eq('user_id', userId);
+
+  resumeQuery = resumeId
+    ? resumeQuery.eq('id', resumeId)
+    : resumeQuery.eq('is_active', true);
+
+  const { data: resume } = await resumeQuery.single();
+
+  if (!resume) {
+    return res.status(404).json({ success: false, error: 'No resume found. Upload and parse a resume first.', code: 'NO_RESUME' });
+  }
+  if (!resume.extracted_text) {
+    return res.status(422).json({ success: false, error: 'Resume not parsed yet. Call POST /resumes/:id/parse first.', code: 'NOT_PARSED' });
+  }
+
+  // Compute JD hash for cache lookup
+  const crypto = require('crypto');
+  const jdNorm = jdText.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
+  const jdHash = crypto.createHash('sha256').update(jdNorm.toLowerCase()).digest('hex').slice(0, 32);
+
+  // Check cache
+  const { data: cached } = await supabase
+    .from('match_results')
+    .select('*')
+    .eq('application_id', applicationId)
+    .eq('resume_id', resume.id)
+    .eq('jd_hash', jdHash)
+    .maybeSingle();
+
+  if (cached) {
+    return res.json({ success: true, data: cached, fromCache: true });
+  }
+
+  // Compute deterministic score
+  const { score, breakdown, matchedSkills, missingSkills } = computeScore(resume.extracted_text, jdNorm);
+
+  // GPT-4o explanation
+  let explanation: any = null;
+  try {
+    const prompt = `You are a career coach reviewing a resume against a job description.
+
+MATCH SCORE: ${score}/100 (FINAL — do not suggest a different number)
+
+SCORE BREAKDOWN:
+- Required skills: ${breakdown.skillOverlap}/35
+- Tech stack: ${breakdown.stackOverlap}/25
+- Title match: ${breakdown.titleSimilarity}/20
+- Experience gap: ${breakdown.experienceGap}
+- Soft skills: ${breakdown.softSkills}/5
+
+MATCHED SKILLS: ${matchedSkills.slice(0, 12).join(', ') || 'none detected'}
+MISSING SKILLS: ${missingSkills.slice(0, 8).join(', ') || 'none'}
+
+RESUME (first 1500 chars):
+${resume.extracted_text.slice(0, 1500)}
+
+JOB DESCRIPTION (first 1500 chars):
+${jdNorm.slice(0, 1500)}
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "summary": "2-3 sentence honest assessment",
+  "bulletPoints": ["observation 1", "observation 2", "observation 3"],
+  "resumeRewrites": [
+    { "original": "original bullet (approximate)", "rewritten": "stronger version tailored to this JD" },
+    { "original": "...", "rewritten": "..." },
+    { "original": "...", "rewritten": "..." }
+  ],
+  "actionSteps": ["step 1", "step 2", "step 3", "step 4"]
+}`;
+
+    const response = await getOpenAI().chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 1000,
+      temperature: 0.3,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const raw = response.choices[0].message.content?.trim() || '';
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    explanation = JSON.parse(clean);
+  } catch (err: any) {
+    console.error('GPT-4o explanation failed:', err.message);
+    explanation = {
+      summary: `This resume scores ${score}/100 for this role.`,
+      bulletPoints: [
+        `Matched skills: ${matchedSkills.slice(0, 5).join(', ') || 'none detected'}`,
+        `Missing skills: ${missingSkills.slice(0, 5).join(', ') || 'none'}`,
+        'AI explanation unavailable — check OPENAI_API_KEY2.',
+      ],
+      resumeRewrites: [],
+      actionSteps: ['Review missing skills and consider adding relevant experience to your resume.'],
+    };
+  }
+
+  // Save to match_results
+  const { data: saved, error: saveErr } = await supabase
+    .from('match_results')
+    .upsert({
+      application_id: applicationId,
+      user_id: userId,
+      resume_id: resume.id,
+      resume_hash: resume.resume_hash,
+      jd_hash: jdHash,
+      score,
+      score_breakdown: breakdown,
+      matched_skills: matchedSkills,
+      missing_skills: missingSkills,
+      explanation,
+      matched_at: new Date().toISOString(),
+    }, { onConflict: 'application_id,resume_id,jd_hash' })
+    .select()
+    .single();
+
+  if (saveErr) console.error('Failed to save match result:', saveErr.message);
+
+  // Also store JD text on the application if empty
+  await supabase
+    .from('applications')
+    .update({ job_description: jdNorm })
+    .eq('id', applicationId)
+    .is('job_description', null);
+
+  console.log(`Match computed: app=${applicationId} score=${score}`);
+  res.json({ success: true, data: saved, fromCache: false, resumeLabel: resume.file_name });
+});
+
+// GET: Fetch most recent match result for an application
+app.get('/match/:appId', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { appId } = req.params;
+
+  const { data, error } = await supabase
+    .from('match_results')
+    .select('*')
+    .eq('application_id', appId)
+    .eq('user_id', userId)
+    .order('matched_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) return res.status(400).json({ success: false, error: error.message });
+  if (!data) return res.status(404).json({ success: false, error: 'No match result found' });
+
+  res.json({ success: true, data });
+});
+
+// DELETE: Clear cached match for an application (forces recompute on next POST /match)
+app.delete('/match/:appId', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { appId } = req.params;
+
+  await supabase.from('match_results').delete().eq('application_id', appId).eq('user_id', userId);
+  res.json({ success: true, message: 'Match cache cleared.' });
+});
+
+// ─── Autofill ────────────────────────────────────────────────────────────────
+// POST /autofill
+// Body: { url: string }
+// Returns: { company, position, location, salary, jobDescription, source }
+// Used by: Add Application form + Chrome extension
+app.post('/autofill', requireAuth, async (req, res) => {
+  const { url } = req.body;
+
+  if (!url || !url.startsWith('http')) {
+    return res.status(400).json({ success: false, error: 'A valid URL is required.' });
+  }
+
+  // 1. Fetch the page
+  let rawHtml = '';
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    rawHtml = await response.text();
+  } catch (err: any) {
+    return res.status(422).json({ success: false, error: `Could not fetch the URL: ${err.message}` });
+  }
+
+  // 2. Strip HTML to readable text
+  const pageText = rawHtml
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 12000); // keep within GPT context
+
+  // 3. GPT-4o extraction
+  const prompt = `You are a job posting parser. Extract structured data from the page text below.
+
+Return ONLY valid JSON with exactly these fields (use null if not found):
+{
+  "company": "Company name (the hiring company, not the job board)",
+  "position": "Job title / position",
+  "location": "City, State or Remote",
+  "salary": "Salary or pay range if mentioned, else null",
+  "jobDescription": "Find the section titled 'Job Description', 'About the Job', 'About this role', 'Responsibilities', or similar — then copy its FULL text exactly as it appears. Do NOT summarize, shorten, or paraphrase. Include all sections: requirements, responsibilities, nice-to-haves, benefits, day-to-day, etc. Preserve all bullet points and formatting as plain text."
+}
+
+PAGE TEXT:
+${pageText}`;
+
+  try {
+    const completion = await getOpenAI().chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 3000,
+      temperature: 0,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const raw = completion.choices[0].message.content?.trim() || '';
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(clean);
+
+    return res.json({ success: true, data: parsed });
+  } catch (err: any) {
+    console.error('AUTOFILL ERROR FULL:', JSON.stringify(err?.response?.data || err?.error || err?.message || err, null, 2));
+    return res.status(500).json({ success: false, error: `Extraction failed: ${err?.response?.data?.error?.message || err?.error?.message || err.message}` });
+  }
+});
+
+// ─── Mira AI Summary ─────────────────────────────────────────────────────────
+// POST /summary
+// Body: { apps: Application[] }
+// Returns: { summary: string, hasResume: boolean }
+app.post('/summary', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const { apps } = req.body;
+
+  if (!Array.isArray(apps) || apps.length === 0) {
+    return res.status(400).json({ success: false, error: 'No applications provided.' });
+  }
+
+  // Fetch active resume server-side
+  const { data: resume } = await supabase
+    .from('resumes')
+    .select('file_name, extracted_text')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .single();
+
+  // Build stats
+  const total = apps.length;
+  const now = new Date();
+  const weekAgo = new Date(); weekAgo.setDate(now.getDate() - 7);
+  const thisWeek = apps.filter((a: any) => new Date(a.dateApplied) >= weekAgo).length;
+
+  const statusCounts: Record<string, number> = {
+    Applied: 0, Screening: 0, 'Interview Scheduled': 0,
+    'Interview Completed': 0, Offer: 0, Rejected: 0, Withdrawn: 0,
+  };
+  apps.forEach((a: any) => {
+    if (statusCounts[a.status] !== undefined) statusCounts[a.status]++;
+  });
+  const interviews = (statusCounts['Interview Scheduled'] || 0) + (statusCounts['Interview Completed'] || 0);
+
+  // Build per-application context with JD snippets
+  const appDetails = apps
+    .slice(0, 20)
+    .map((a: any) => {
+      const jd = a.jobDescription ? `\n   JD Snippet: ${a.jobDescription.slice(0, 400)}` : '';
+      return `- ${a.company} | ${a.position} | ${a.status} | Applied: ${a.dateApplied}${jd}`;
+    })
+    .join('\n');
+
+  const resumeSection = resume?.extracted_text
+    ? `\nACTIVE RESUME (${resume.file_name}):\n${resume.extracted_text.slice(0, 3000)}`
+    : '\nACTIVE RESUME: None uploaded or parsed yet. Call this out.';
+
+  const prompt = `You are Mira, an empathetic but grounded AI career assistant. Analyze this person's job search honestly.
+
+Guidelines:
+- Be warm and supportive in tone, but never sugarcoat the reality
+- Acknowledge genuine progress and effort where it exists
+- Be direct about what isn't working without being harsh
+- If weekly application rate is below 15, flag it clearly but constructively
+- Speak directly to the user in second person
+- Offer one or two concrete, actionable observations — not generic advice
+- If resume is provided, identify specific skill gaps or positioning mismatches relative to the roles they are applying to
+- If no resume is uploaded, point that out as something to address
+- Plain sentences only, no bullet points or formatting
+- 6-10 lines total
+
+APPLICATIONS (${total} total, ${thisWeek} this week):
+${appDetails}
+
+STATS:
+Screening: ${statusCounts['Screening']} | Interviews: ${interviews} | Offers: ${statusCounts['Offer']} | Rejected: ${statusCounts['Rejected']}
+${resumeSection}`;
+
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 500,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: 'You are Mira, a warm and empathetic AI career assistant who gives honest, grounded feedback. You are encouraging but never dishonest. You speak plainly, avoid bullet points, and never use em dashes.' },
+        { role: 'user', content: prompt },
+      ],
+    });
+
+    const summary = response.choices[0].message.content?.trim() || '';
+    return res.json({ success: true, summary, hasResume: !!resume?.extracted_text });
+  } catch (err: any) {
+    console.error('Mira summary error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.listen(PORT, () => {

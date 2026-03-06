@@ -506,11 +506,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [expandedApp, setExpandedApp] = useState(null);
-  const [aiProvider, setAiProvider] = useState({ useOpenAI: false, hasApiKey: false });
-
-  useEffect(() => {
-  // AI provider settings are stored server-side in later tiers.
-}, []);
+  // AI summary state
 
   const [formData, setFormData] = useState({
     company: "",
@@ -543,11 +539,43 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [resumesLoading, setResumesLoading] = useState(false);
   const [resumeUploading, setResumeUploading] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [resumeParseStatus, setResumeParseStatus] = useState<Record<string, "idle"|"parsing"|"done"|"error">>({});
+  const [showMatchPanel, setShowMatchPanel] = useState(false);
+  const [matchResumeId, setMatchResumeId] = useState<string>("");
+  const [matchAppId, setMatchAppId] = useState<string>("");
+  const [matchJD, setMatchJD] = useState<string>("");
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchResult, setMatchResult] = useState<any>(null);
+  const [matchError, setMatchError] = useState<string | null>(null);
 
   const generateAiSummary = async () => {
-  // Tier 4: AI summaries (server-side). Disabled in Tier 0 web SaaS scope.
-  return;
-};
+    if (!apps.length || !session?.access_token) return;
+    setLoadingSummary(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/summary`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          apps: apps.map((a: any) => ({
+            company: a.company,
+            position: a.position,
+            status: a.status,
+            dateApplied: a.dateApplied,
+            jobDescription: a.jobDescription || '',
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) setAiSummary(data.summary);
+    } catch (err) {
+      console.error('Mira summary failed:', err);
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
 
   useEffect(() => {
     applyThemeToDom(theme);
@@ -765,6 +793,13 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       fetchProfile();
     }
   }, [session]);
+
+  // Auto-generate Mira summary when apps first load
+  useEffect(() => {
+    if (apps.length > 0 && !aiSummary && !loadingSummary) {
+      generateAiSummary();
+    }
+  }, [apps]);
 
   const handleApplyTheme = () => {
     setTheme(previewTheme);
@@ -1036,9 +1071,43 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   alert("File upload coming in Tier 4");
 };
 
-const handleAutofill = async () => {
-  alert("Extension import coming in Tier 6");
-};
+  const [autofillLoading, setAutofillLoading] = useState(false);
+
+  const handleAutofill = async () => {
+    if (!formData.jobUrl?.startsWith('http')) {
+      alert('Paste a valid job URL first.');
+      return;
+    }
+    setAutofillLoading(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/autofill`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: formData.jobUrl }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const { company, position, location, salary, jobDescription } = data.data;
+        setFormData((p) => ({
+          ...p,
+          ...(company        && { company }),
+          ...(position       && { position }),
+          ...(location       && { location }),
+          ...(salary         && { salary }),
+          ...(jobDescription && { jobDescription }),
+        }));
+      } else {
+        alert(data.error || 'Autofill failed.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Autofill failed.');
+    } finally {
+      setAutofillLoading(false);
+    }
+  };
 
   const handleRemoveDoc = (idx: number) => {
     setFormData((prev) => ({
@@ -1161,6 +1230,62 @@ const handleAutofill = async () => {
       }
     } catch (err: any) {
       setResumeError(err?.message || "Download failed.");
+    }
+  };
+
+  const handleResumeParse = async (id: string) => {
+    setResumeParseStatus((p) => ({ ...p, [id]: "parsing" }));
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/resumes/${id}/parse`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResumeParseStatus((p) => ({ ...p, [id]: "done" }));
+        await fetchResumes();
+      } else {
+        setResumeParseStatus((p) => ({ ...p, [id]: "error" }));
+        setResumeError(data.error || "Parse failed.");
+      }
+    } catch (err: any) {
+      setResumeParseStatus((p) => ({ ...p, [id]: "error" }));
+      setResumeError(err?.message || "Parse failed.");
+    }
+  };
+
+  const handleRunMatch = async () => {
+    if (!matchResumeId || !matchAppId || !matchJD.trim()) {
+      setMatchError("Please select a resume, an application, and paste a job description.");
+      return;
+    }
+    setMatchLoading(true);
+    setMatchError(null);
+    setMatchResult(null);
+    try {
+      // Set chosen resume as active first
+      await fetch(`${import.meta.env.VITE_API_URL}/resumes/${matchResumeId}/active`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/match`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ applicationId: matchAppId, jdText: matchJD }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMatchResult(data.data);
+      } else {
+        setMatchError(data.error || "Match failed.");
+      }
+    } catch (err: any) {
+      setMatchError(err?.message || "Match failed.");
+    } finally {
+      setMatchLoading(false);
     }
   };
 
@@ -1311,9 +1436,6 @@ const handleAutofill = async () => {
   <h1 style={{ fontSize: 42, fontWeight: 900, margin: 0, marginBottom: 8, color: "var(--jt-title)", textShadow: `0 0 calc(50px * var(--jt-title-glow)) var(--jt-title)` }}>
     {displayName ? `Welcome, ${displayName} 👋` : "Job Application Tracker"}
   </h1>
-  <p style={{ color: "var(--jt-muted)", fontSize: 16, margin: 0, marginBottom: 16 }}>
-    Powered by Qwen 2.5 Pro 
-  </p>
   {/* Avatar button — top right corner */}
   <button
     onClick={() => setActiveTab("profile")}
@@ -1360,55 +1482,11 @@ const handleAutofill = async () => {
           display: 'flex',
           alignItems: 'center',
           gap: 12,
-          justifyContent: 'space-between'
+          justifyContent: 'flex-start'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             Mira's Insight
-            <span style={{ 
-              fontSize: 10, 
-              padding: '2px 6px', 
-              background: 'var(--jt-panel)', 
-              borderRadius: 4,
-              color: 'var(--jt-muted)',
-              fontWeight: 500
-            }}>
-              {aiProvider.useOpenAI ? 'GPT-4o' : 'Qwen 2.5'}
-            </span>
           </div>
-          
-          {/* AI Provider Toggle */}
-<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-  <span style={{ fontSize: 11, color: 'var(--jt-muted)' }}>Local</span>
-  <button
-    onClick={() => {
-      const newValue = !aiProvider.useOpenAI;
-      setAiProvider((prev: any) => ({ ...prev, useOpenAI: newValue }));
-    }}
-    style={{
-      width: 44,
-      height: 24,
-      borderRadius: 12,
-      border: 'none',
-      background: aiProvider.useOpenAI ? 'var(--jt-accent)' : 'var(--jt-title)',
-      position: 'relative',
-      cursor: 'pointer',
-      transition: 'all 0.3s ease',
-      padding: 0
-    }}
-  >
-    <div style={{
-      width: 16,
-      height: 16,
-      borderRadius: '50%',
-      background: '#d0d0d0',
-      position: 'absolute',
-      top: 4,
-      left: aiProvider.useOpenAI ? 24 : 4,
-      transition: 'all 0.3s ease'
-    }} />
-  </button>
-  <span style={{ fontSize: 11, color: 'var(--jt-muted)' }}>GPT-4o</span>
-</div>
         </div>
         {loadingSummary ? (
           <div style={{ color: 'var(--jt-muted)', fontSize: 14, fontStyle: 'italic' }}>
@@ -1752,7 +1830,24 @@ const handleAutofill = async () => {
                           </div>
 
                           {/* Actions */}
-                          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                          <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
+                            {/* Parsed badge */}
+                            {resume.extracted_text && (
+                              <span style={{
+                                fontSize: 11, fontWeight: 700, padding: "3px 8px",
+                                borderRadius: 999, background: "rgba(16,185,129,0.15)",
+                                border: "1px solid rgba(16,185,129,0.4)", color: "#10b981",
+                              }}>✓ Parsed</span>
+                            )}
+                            {/* Parse button */}
+                            <button
+                              onClick={() => handleResumeParse(resume.id)}
+                              disabled={resumeParseStatus[resume.id] === "parsing"}
+                              title={resume.extracted_text ? "Re-parse" : "Parse for matching"}
+                              style={{ ...S.button("secondary"), padding: "8px 14px", fontSize: 13 }}
+                            >
+                              {resumeParseStatus[resume.id] === "parsing" ? "Parsing…" : resume.extracted_text ? "Re-parse" : "Parse"}
+                            </button>
                             <button
                               onClick={() => handleResumeDownload(resume.id)}
                               title="Download"
@@ -1818,6 +1913,154 @@ const handleAutofill = async () => {
                         </div>
                       </label>
                     ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Resume Match ── */}
+            <div style={S.card}>
+              <div style={{ padding: 28 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
+                    🎯 Resume Match
+                  </div>
+                  <button
+                    onClick={() => { setShowMatchPanel(!showMatchPanel); setMatchResult(null); setMatchError(null); }}
+                    style={{ ...S.button("secondary"), padding: "8px 16px", fontSize: 13 }}
+                  >
+                    {showMatchPanel ? "Hide" : "Match Resume to Job"}
+                  </button>
+                </div>
+                <div style={{ color: "var(--jt-muted)", fontSize: 13 }}>
+                  Score how well a parsed resume fits a specific job description.
+                </div>
+
+                {showMatchPanel && (
+                  <div style={{ marginTop: 24, display: "grid", gap: 16 }}>
+                    {matchError && (
+                      <div style={{ padding: "12px 16px", borderRadius: "var(--jt-radius)", background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.4)", color: "#f87171", fontSize: 14 }}>
+                        {matchError}
+                      </div>
+                    )}
+
+                    {/* Resume selector */}
+                    <div>
+                      <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 6 }}>Select Resume</label>
+                      <select
+                        value={matchResumeId}
+                        onChange={(e) => setMatchResumeId(e.target.value)}
+                        style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--jt-radius)", border: "1px solid var(--jt-border)", background: "var(--jt-panel)", color: "var(--jt-text)", fontSize: 14 }}
+                      >
+                        <option value="">— choose a parsed resume —</option>
+                        {resumes.filter((r) => r.extracted_text).map((r) => (
+                          <option key={r.id} value={r.id}>{r.file_name}</option>
+                        ))}
+                      </select>
+                      {resumes.filter((r) => r.extracted_text).length === 0 && (
+                        <div style={{ fontSize: 12, color: "var(--jt-muted)", marginTop: 4 }}>No parsed resumes yet — hit Parse on a resume above first.</div>
+                      )}
+                    </div>
+
+                    {/* Application selector */}
+                    <div>
+                      <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 6 }}>Select Application</label>
+                      <select
+                        value={matchAppId}
+                        onChange={(e) => setMatchAppId(e.target.value)}
+                        style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--jt-radius)", border: "1px solid var(--jt-border)", background: "var(--jt-panel)", color: "var(--jt-text)", fontSize: 14 }}
+                      >
+                        <option value="">— choose an application —</option>
+                        {apps.map((app: any) => (
+                          <option key={app.id} value={app.id}>{app.company} — {app.position}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* JD textarea */}
+                    <div>
+                      <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 6 }}>Paste Job Description</label>
+                      <textarea
+                        value={matchJD}
+                        onChange={(e) => setMatchJD(e.target.value)}
+                        placeholder="Paste the full job description here…"
+                        rows={8}
+                        style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--jt-radius)", border: "1px solid var(--jt-border)", background: "var(--jt-panel)", color: "var(--jt-text)", fontSize: 14, resize: "vertical", boxSizing: "border-box" }}
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleRunMatch}
+                      disabled={matchLoading}
+                      style={{ ...S.button("primary"), padding: "12px 24px", fontSize: 15, width: "fit-content" }}
+                    >
+                      {matchLoading ? "Analyzing…" : "Run Match"}
+                    </button>
+
+                    {/* Results */}
+                    {matchResult && (
+                      <div style={{ marginTop: 8, display: "grid", gap: 16 }}>
+                        {/* Score card */}
+                        <div style={{ ...S.panel, padding: 24, display: "flex", alignItems: "center", gap: 24 }}>
+                          <div style={{ textAlign: "center", flexShrink: 0 }}>
+                            <div style={{ fontSize: 52, fontWeight: 900, color: matchResult.score >= 70 ? "#10b981" : matchResult.score >= 45 ? "#f59e0b" : "#f87171", lineHeight: 1 }}>
+                              {matchResult.score}
+                            </div>
+                            <div style={{ fontSize: 13, color: "var(--jt-muted)", marginTop: 4 }}>/ 100</div>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
+                              {matchResult.score >= 70 ? "Strong Match 🟢" : matchResult.score >= 45 ? "Moderate Match 🟡" : "Weak Match 🔴"}
+                            </div>
+                            {matchResult.gpt_summary && (
+                              <div style={{ fontSize: 14, color: "var(--jt-muted)", lineHeight: 1.5 }}>{matchResult.gpt_summary}</div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Breakdown */}
+                        {matchResult.breakdown && (
+                          <div style={{ ...S.panel, padding: 20 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Score Breakdown</div>
+                            {Object.entries(matchResult.breakdown).map(([key, val]: any) => (
+                              <div key={key} style={{ marginBottom: 10 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                                  <span style={{ textTransform: "capitalize" }}>{key.replace(/_/g, " ")}</span>
+                                  <span style={{ fontWeight: 700 }}>{val}</span>
+                                </div>
+                                <div style={{ height: 6, borderRadius: 3, background: "var(--jt-border)", overflow: "hidden" }}>
+                                  <div style={{ height: "100%", width: `${Math.min(100, (val / (key === "skills" ? 35 : key === "stack" ? 25 : key === "title" ? 20 : 10)) * 100)}%`, background: "var(--jt-accent)", borderRadius: 3, transition: "width 0.5s ease" }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Matched / Missing skills */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                          {matchResult.matched_skills?.length > 0 && (
+                            <div style={{ ...S.panel, padding: 16 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#10b981" }}>✓ Matched Skills</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {matchResult.matched_skills.map((s: string) => (
+                                  <span key={s} style={{ fontSize: 12, padding: "3px 8px", borderRadius: 999, background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", color: "#10b981" }}>{s}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {matchResult.missing_skills?.length > 0 && (
+                            <div style={{ ...S.panel, padding: 16 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#f87171" }}>✗ Missing Skills</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {matchResult.missing_skills.map((s: string) => (
+                                  <span key={s} style={{ fontSize: 12, padding: "3px 8px", borderRadius: 999, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>{s}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2479,10 +2722,13 @@ const handleAutofill = async () => {
                         <button
                           type="button"
                           onClick={handleAutofill}
-                          style={{ ...S.button("secondary"), padding: "10px 16px" }}
-                          title="Autofill company and position from URL"
+                          disabled={autofillLoading}
+                          style={{ ...S.button("secondary"), padding: "10px 16px", minWidth: 44 }}
+                          title="Autofill from URL"
                         >
-                          <Wand2 size={18} />
+                          {autofillLoading
+                            ? <div style={{ width: 16, height: 16, border: "2px solid var(--jt-accent)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                            : <Wand2 size={18} />}
                         </button>
                       </div>
                   </div>
@@ -2505,48 +2751,6 @@ const handleAutofill = async () => {
                       onChange={(e) => setFormData((p) => ({ ...p, notes: e.target.value }))}
                       style={{ ...S.input, minHeight: 80, resize: "vertical" }}
                     />
-                  </div>
-
-                  <div>
-                    <label style={{ display: "block", marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Documents</label>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-                      {(formData.documents || []).map((doc, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            padding: "6px 12px",
-                            background: "var(--jt-bg)",
-                            borderRadius: "var(--jt-radius)",
-                            fontSize: 13,
-                          }}
-                        >
-                          <File size={14} />
-                          {doc.name}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveDoc(i)}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              color: "var(--jt-muted)",
-                              cursor: "pointer",
-                              padding: 0,
-                            }}
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    <button type="button" onClick={handleFileAttach} style={S.button("secondary")}>
-                      <Upload size={16} /> Attach File
-                    </button>
-                    <div style={{ marginTop: 8, fontSize: 12, color: "var(--jt-muted)" }}>
-                      File upload coming in Tier 4
-                    </div>
                   </div>
                 </div>
 
