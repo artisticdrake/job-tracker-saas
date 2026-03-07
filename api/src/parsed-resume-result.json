@@ -6,8 +6,8 @@
     "is_active": true,
     "extracted_text_length": 4316,
     "non_ascii_ratio": 0.006024096385542169,
-    "elapsed_ms": 2566,
-    "diagnosed_at": "2026-03-07T03:20:55.240Z"
+    "elapsed_ms": 4820,
+    "diagnosed_at": "2026-03-07T03:41:40.170Z"
   },
   "parsed_resume": {
     "skills": [
@@ -28,11 +28,24 @@
       "git",
       "gcp",
       "spleeter",
-      "rapidfuzz",
       "fastapi",
       "docker",
+      "jenkins",
       "aws",
-      "redis"
+      "redis",
+      "rapidfuzz",
+      "r",
+      "java",
+      "c/c++",
+      "javascript",
+      "postgresql",
+      "keras",
+      "xgboost",
+      "random forest",
+      "neural networks",
+      "langchain",
+      "spacy",
+      "nltk"
     ],
     "yearsExp": 2
   },
@@ -101,7 +114,6 @@
     "machine learning",
     "deep learning",
     "nlp",
-    "linux",
-    "javascript"
+    "linux"
   ]
 }

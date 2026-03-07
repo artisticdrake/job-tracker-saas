@@ -1,4 +1,4 @@
-DIAGNOSIS REPORT — 2026-03-07T03:20:52.672Z
+DIAGNOSIS REPORT — 2026-03-07T03:41:35.345Z
 Resume: Preetham Prathipati_Data Science Co-Op (NLP & GenAI)_20260304.pdf
 Extracted text length: 4316 chars
 
@@ -26,13 +26,12 @@ Skill presence in raw extracted text:
   ✓ javascript
 
 Skill extraction by LLM (parseResume):
-  Total extracted: 22
+  Total extracted: 35
   Years exp: 2
-  Skills: python, sql, pandas, scikit-learn, hugging face, openai api, yolo, opencv, raspberry pi, ocr, matplotlib, tensorflow, pytorch, numpy, git, gcp, spleeter, rapidfuzz, fastapi, docker, aws, redis
+  Skills: python, sql, pandas, scikit-learn, hugging face, openai api, yolo, opencv, raspberry pi, ocr, matplotlib, tensorflow, pytorch, numpy, git, gcp, spleeter, fastapi, docker, jenkins, aws, redis, rapidfuzz, r, java, c/c++, javascript, postgresql, keras, xgboost, random forest, neural networks, langchain, spacy, nltk
 
 Skills in raw text but MISSED by LLM:
   ✗ "machine learning" — in raw text but NOT extracted by LLM
   ✗ "deep learning" — in raw text but NOT extracted by LLM
   ✗ "nlp" — in raw text but NOT extracted by LLM
   ✗ "linux" — in raw text but NOT extracted by LLM
-  ✗ "javascript" — in raw text but NOT extracted by LLM

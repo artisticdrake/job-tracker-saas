@@ -70,20 +70,29 @@ Extract the following from this job description and return ONLY valid JSON, no m
 }
 
 Rules:
+- Extract BOTH specific tools AND broad domain terms:
+  * "experience with machine learning" → include "machine learning"
+  * "deep learning frameworks" → include "deep learning" AND specific frameworks mentioned
+  * "data visualization tools" → include "data visualization"
+  * "NLP or text processing" → include "nlp" AND "natural language processing"
+  * "statistical modeling" → include "statistical modeling"
+  * "computer vision" → include "computer vision"
+  * "data analysis" → include "data analysis"
+  * "data science background" → include "data science"
+  * "data engineering" → include "data engineering"
 - "required": skills/technologies that are EXPLICITLY required (look for: "required", "must have", "minimum", "qualifications", "you will need")
 - "preferred": skills/technologies that are desired but not mandatory (look for: "preferred", "nice to have", "bonus", "plus", "ideally")
 - If a skill appears in both sections, put it ONLY in "required"
 - "yearsExp": the MINIMUM years of experience required as an integer, or null if not specified
-- Skills should be lowercase, specific technical terms (e.g., "pytorch", "react", "sql") — not vague phrases
-- Include at most 20 required and 15 preferred skills
-- If you cannot distinguish required from preferred, put everything reasonable in "required" and leave "preferred" empty
+- All skills lowercase. Include up to 20 required and 15 preferred.
+- If you cannot distinguish required from preferred, put everything in "required"
 
 JOB DESCRIPTION:
 ${jdText.slice(0, 4000)}`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4.1-mini',
       max_tokens: 600,
       temperature: 0.1, // Low temp for structured extraction
       messages: [{ role: 'user', content: prompt }],
@@ -128,17 +137,27 @@ Extract the following and return ONLY valid JSON, no markdown, no explanation:
 }
 
 Rules:
-- "skills": ALL technical skills, tools, frameworks, languages, and platforms mentioned. Lowercase, specific (e.g., "pytorch", "react", "aws", "sql"). Include up to 50.
-- "yearsExp": Calculate total professional experience in years from work history dates. Use the most recent end date minus earliest start date. Return as integer or null if not determinable.
-- Do NOT include soft skills or generic words like "communication" or "teamwork"
-- Do NOT include company names or job titles as skills
+- "skills": Extract TWO types of terms — specific tools AND broad domain categories:
+  TYPE 1 - Specific tools/libraries (always include): "pytorch", "tensorflow", "scikit-learn", "opencv", "pandas", "react", "docker", "aws", etc.
+  TYPE 2 - Domain/category terms (ALWAYS include these if the resume implies them):
+    * If resume mentions PyTorch, TensorFlow, Keras, neural networks → add "deep learning"
+    * If resume mentions scikit-learn, XGBoost, Random Forest, ML models → add "machine learning"
+    * If resume mentions OpenCV, YOLO, image processing, computer vision → add "computer vision"
+    * If resume mentions NLTK, spaCy, HuggingFace, LangChain, text processing → add "nlp" AND "natural language processing"
+    * If resume mentions pandas, numpy, matplotlib, data analysis tasks → add "data analysis" AND "data visualization"
+    * If resume mentions pipelines, ETL, data workflows → add "data engineering"
+    * If resume explicitly lists "Data Science", "Machine Learning", "Deep Learning" as a skill → ALWAYS include it verbatim
+    * If resume mentions statistical analysis, regression, modeling → add "statistical modeling" AND "statistics"
+  Include up to 60 skills total. Lowercase everything.
+- "yearsExp": Calculate total professional experience in years from work history dates. Student with internships counts. Return as integer or null if not determinable.
+- Do NOT include soft skills, company names, or job titles
 
 RESUME TEXT:
 ${resumeText.slice(0, 4000)}`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4.1-mini',
       max_tokens: 500,
       temperature: 0.1,
       messages: [{ role: 'user', content: prompt }],
@@ -285,7 +304,7 @@ Respond ONLY with valid JSON, no markdown:
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4.1-mini',
       max_tokens: 1000,
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }],
