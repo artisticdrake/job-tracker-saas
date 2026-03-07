@@ -548,6 +548,11 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [matchResult, setMatchResult] = useState<any>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
 
+  // Match dialog — opened from the table row button
+  const [matchDialogApp, setMatchDialogApp] = useState<any>(null);
+  // Cache of scores per app id: { [appId]: number }
+  const [appScores, setAppScores] = useState<Record<string, number>>({});
+
   const generateAiSummary = async () => {
     if (!apps.length || !session?.access_token) return;
     setLoadingSummary(true);
@@ -644,6 +649,8 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       });
 
       setApps(mapped);
+      // Load any previously cached match scores for the score column
+      loadCachedScores(mapped);
     } catch (err: any) {
       console.error(err);
       alert(err?.message || "Failed to load applications.");
@@ -1134,6 +1141,45 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     a.download = `job-applications-${todayISO()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Open the match dialog for a specific app, pre-load cached score + resume list
+  const openMatchDialog = async (app: any) => {
+    setMatchDialogApp(app);
+    setMatchResult(null);
+    setMatchError(null);
+    // Pre-fetch resumes if not already loaded
+    if (resumes.length === 0) await fetchResumes();
+    // Load any cached match result for this app
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/match/${app.id}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.success && d.data) {
+          setMatchResult(d.data);
+          setAppScores(prev => ({ ...prev, [app.id]: d.data.score }));
+        }
+      }
+    } catch {}
+  };
+
+  // After apps load, fetch cached scores for all apps in one pass
+  const loadCachedScores = async (appList: any[]) => {
+    const scores: Record<string, number> = {};
+    await Promise.all(appList.map(async (app) => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/match/${app.id}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (res.ok) {
+          const d = await res.json();
+          if (d.success && d.data?.score != null) scores[app.id] = d.data.score;
+        }
+      } catch {}
+    }));
+    setAppScores(scores);
   };
 
   const fetchResumes = async () => {
@@ -1643,19 +1689,20 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Referral</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Last Updated</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Applied</th>
+                      <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Match</th>
                       <th style={{ padding: "16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: "var(--jt-muted)" }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={7} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
+                        <td colSpan={8} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
                           Loading applications...
                         </td>
                       </tr>
                     ) : sortedApps.length === 0 ? (
                       <tr>
-                        <td colSpan={7} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
+                        <td colSpan={8} style={{ padding: 48, textAlign: "center", color: "var(--jt-muted)" }}>
                           No applications yet. Click "Add Application" to get started!
                         </td>
                       </tr>
@@ -1716,6 +1763,26 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                             <td style={{ padding: "16px", fontSize: 14, color: "var(--jt-muted)" }}>
                               {formatLocalYYYYMMDDToLocale(app.dateApplied)}
                             </td>
+                            {/* Match Score column */}
+                            <td style={{ padding: "16px" }}>
+                              {appScores[app.id] != null ? (() => {
+                                const s = appScores[app.id];
+                                const color = s >= 75 ? "#34d399" : s >= 50 ? "#f59e0b" : "#f87171";
+                                return (
+                                  <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                    <div style={{
+                                      width: 36, height: 36, borderRadius: "50%",
+                                      border: `2px solid ${color}`,
+                                      display: "flex", alignItems: "center", justifyContent: "center",
+                                      fontSize: 11, fontWeight: 800, color,
+                                      boxShadow: `0 0 10px ${color}60`,
+                                    }}>{s}</div>
+                                  </div>
+                                );
+                              })() : (
+                                <div style={{ fontSize: 12, color: "var(--jt-muted)", fontStyle: "italic" }}>—</div>
+                              )}
+                            </td>
                             <td style={{ padding: "16px" }}>
                               <div style={{ display: "flex", gap: 8 }} onClick={(e) => e.stopPropagation()}>
                                 <button onClick={() => handleEdit(app)} style={{ ...S.button("secondary"), padding: "6px 10px" }} title="Edit">
@@ -1730,11 +1797,11 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                                   <Trash2 size={14} />
                                 </button>
                                 <button
-                                  onClick={() => setExpandedApp(expandedApp === app.id ? null : app.id)}
-                                  style={{ ...S.button("secondary"), padding: "6px 10px" }}
-                                  title="View Details"
+                                  onClick={() => openMatchDialog(app)}
+                                  style={{ ...S.button("secondary"), padding: "6px 10px", borderColor: "rgba(99,102,241,0.5)", color: "var(--jt-accent)" }}
+                                  title="Match Resume"
                                 >
-                                  {expandedApp === app.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                  <Sparkles size={14} />
                                 </button>
                               </div>
                             </td>
@@ -2492,6 +2559,245 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                     </div>
                   )}
 
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── Resume Match Dialog ── */}
+        {matchDialogApp && (() => {
+          const app = matchDialogApp;
+          const parsedResumes = resumes.filter((r: any) => r.resume_hash);
+          const activeResume = parsedResumes.find((r: any) => r.is_active) || parsedResumes[0];
+          const selectedResume = resumes.find((r: any) => r.id === matchResumeId) || activeResume;
+
+          const scoreColor = (s: number) => s >= 75 ? "#34d399" : s >= 50 ? "#f59e0b" : "#f87171";
+          const scoreLabel = (s: number) => s >= 75 ? "Strong Match 🟢" : s >= 50 ? "Partial Match 🟡" : "Weak Match 🔴";
+
+          const runMatch = async () => {
+            const resumeId = selectedResume?.id;
+            if (!resumeId) { setMatchError("No parsed resume found. Go to Files → Parse a resume first."); return; }
+            setMatchLoading(true);
+            setMatchError(null);
+            setMatchResult(null);
+            try {
+              const res = await fetch(`${import.meta.env.VITE_API_URL}/match`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+                body: JSON.stringify({ applicationId: app.id, resumeId }),
+              });
+              const d = await res.json();
+              if (!d.success) throw new Error(d.error || "Match failed");
+              setMatchResult(d.data);
+              // Update the score badge in the table
+              setAppScores(prev => ({ ...prev, [app.id]: d.data.score }));
+            } catch (e: any) {
+              setMatchError(e.message);
+            } finally {
+              setMatchLoading(false);
+            }
+          };
+
+          return (
+            <div className="jt-modal" style={{ zIndex: 1600, alignItems: "flex-start", paddingTop: 40 }}>
+              <div className="jt-card" style={{ width: "min(680px, 100%)", maxHeight: "88vh", overflow: "auto", display: "flex", flexDirection: "column" }}>
+
+                {/* Header */}
+                <div style={{ padding: "22px 28px", borderBottom: "1px solid var(--jt-border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                      <Sparkles size={18} color="var(--jt-accent)" />
+                      <span style={{ fontSize: 18, fontWeight: 800 }}>Resume Match</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--jt-muted)" }}>{app.company} — {app.position}</div>
+                  </div>
+                  <button onClick={() => { setMatchDialogApp(null); setMatchResult(null); setMatchError(null); }} style={{ ...S.button("secondary"), padding: "8px 12px" }}>
+                    <X size={15} />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div style={{ padding: 28, display: "grid", gap: 20, overflow: "auto" }}>
+
+                  {/* Resume selector */}
+                  {parsedResumes.length === 0 ? (
+                    <div style={{ padding: "14px 18px", borderRadius: "var(--jt-radius)", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", color: "#f59e0b", fontSize: 14 }}>
+                      ⚠ No parsed resumes found. Go to <strong>Files</strong> and click <strong>Parse</strong> on a resume first.
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Resume</div>
+                      <select
+                        value={matchResumeId || activeResume?.id || ""}
+                        onChange={e => setMatchResumeId(e.target.value)}
+                        style={{ width: "100%", padding: "10px 12px", background: "var(--jt-panel)", border: "1px solid var(--jt-border)", borderRadius: "var(--jt-radius)", color: "var(--jt-text)", fontSize: 14 }}
+                      >
+                        {parsedResumes.map((r: any) => (
+                          <option key={r.id} value={r.id}>{r.file_name}{r.is_active ? " ✓ active" : ""}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* JD status */}
+                  <div style={{ padding: "12px 16px", borderRadius: "var(--jt-radius)", background: app.jobDescription ? "rgba(52,211,153,0.07)" : "rgba(99,102,241,0.07)", border: `1px solid ${app.jobDescription ? "rgba(52,211,153,0.25)" : "rgba(99,102,241,0.25)"}`, fontSize: 13 }}>
+                    {app.jobDescription
+                      ? <span style={{ color: "#34d399" }}>✓ Job description found — ready to match</span>
+                      : <span style={{ color: "var(--jt-muted)" }}>⚠ No job description on this application. Edit the application and add one for best results.</span>
+                    }
+                  </div>
+
+                  {/* Error */}
+                  {matchError && (
+                    <div style={{ padding: "12px 16px", borderRadius: "var(--jt-radius)", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.35)", color: "#f87171", fontSize: 13 }}>
+                      {matchError}
+                    </div>
+                  )}
+
+                  {/* Run button */}
+                  {!matchResult && (
+                    <button
+                      onClick={runMatch}
+                      disabled={matchLoading || parsedResumes.length === 0}
+                      style={{ ...S.button("primary"), justifyContent: "center", padding: "13px 0", fontSize: 15, opacity: (matchLoading || parsedResumes.length === 0) ? 0.6 : 1 }}
+                    >
+                      {matchLoading ? (
+                        <>
+                          <span style={{ width: 16, height: 16, border: "2px solid #ffffff40", borderTop: "2px solid #fff", borderRadius: "50%", display: "inline-block", animation: "jt-spin 0.8s linear infinite" }} />
+                          Analyzing… this takes 10–15 seconds
+                        </>
+                      ) : (
+                        <><Sparkles size={16} /> Run Match</>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Loading state — progressive message */}
+                  {matchLoading && (
+                    <div style={{ textAlign: "center", color: "var(--jt-muted)", fontSize: 13, lineHeight: 1.8 }}>
+                      <div>Parsing job description and resume with AI…</div>
+                      <div>Computing skill overlap…</div>
+                      <div>Generating personalized suggestions…</div>
+                    </div>
+                  )}
+
+                  {/* Results */}
+                  {matchResult && !matchLoading && (() => {
+                    const score = matchResult.score;
+                    const bd = matchResult.score_breakdown;
+                    const exp = matchResult.explanation || {};
+                    return (
+                      <div style={{ display: "grid", gap: 16 }}>
+                        <style>{`@keyframes jt-spin { to { transform: rotate(360deg); } }`}</style>
+
+                        {/* Score ring + breakdown */}
+                        <div style={{ ...S.panel, padding: "20px 24px", display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", borderColor: `${scoreColor(score)}40` }}>
+                          <div style={{ textAlign: "center", flexShrink: 0 }}>
+                            <div style={{ fontSize: 56, fontWeight: 900, color: scoreColor(score), lineHeight: 1 }}>{score}</div>
+                            <div style={{ fontSize: 13, color: "var(--jt-muted)", marginTop: 2 }}>/100</div>
+                            <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: scoreColor(score) }}>{scoreLabel(score)}</div>
+                          </div>
+                          {bd && (
+                            <div style={{ flex: 1, minWidth: 200, display: "grid", gap: 8 }}>
+                              {([
+                                ["Required Skills", bd.requiredScore ?? bd.skillOverlap, 50],
+                                ["Preferred Skills", bd.preferredScore ?? bd.stackOverlap, 30],
+                                ["Experience", bd.experienceScore ?? bd.titleSimilarity, 20],
+                              ] as [string, number, number][]).map(([label, val, max]) => (
+                                <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <div style={{ fontSize: 11, color: "var(--jt-muted)", width: 110, flexShrink: 0 }}>{label}</div>
+                                  <div style={{ flex: 1, height: 5, background: "var(--jt-bg)", borderRadius: 3, overflow: "hidden" }}>
+                                    <div style={{ width: `${Math.max(0, (val / max) * 100)}%`, height: "100%", background: scoreColor(score), borderRadius: 3, transition: "width 0.6s ease" }} />
+                                  </div>
+                                  <div style={{ fontSize: 11, color: "var(--jt-muted)", width: 36, textAlign: "right" }}>{val}/{max}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* AI Summary */}
+                        {exp.summary && (
+                          <div style={{ ...S.panel, padding: "14px 18px", borderLeft: `3px solid ${scoreColor(score)}`, fontSize: 14, lineHeight: 1.7 }}>
+                            {exp.summary}
+                          </div>
+                        )}
+
+                        {/* Matched / Missing skills */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                          <div style={{ ...S.panel, padding: "14px 16px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#34d399", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>
+                              ✓ Matched ({matchResult.matched_skills?.length || 0})
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                              {(matchResult.matched_skills || []).slice(0, 12).map((s: string) => (
+                                <span key={s} style={{ padding: "3px 8px", borderRadius: 999, fontSize: 11, background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}>{s}</span>
+                              ))}
+                              {!matchResult.matched_skills?.length && <span style={{ color: "var(--jt-muted)", fontSize: 12 }}>None detected</span>}
+                            </div>
+                          </div>
+                          <div style={{ ...S.panel, padding: "14px 16px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#f87171", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>
+                              ✗ Missing ({matchResult.missing_skills?.length || 0})
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                              {(matchResult.missing_skills || []).slice(0, 12).map((s: string) => (
+                                <span key={s} style={{ padding: "3px 8px", borderRadius: 999, fontSize: 11, background: "rgba(248,113,113,0.1)", color: "#f87171", border: "1px solid rgba(248,113,113,0.25)" }}>{s}</span>
+                              ))}
+                              {!matchResult.missing_skills?.length && <span style={{ color: "var(--jt-muted)", fontSize: 12 }}>None</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bullet observations */}
+                        {exp.bulletPoints?.length > 0 && (
+                          <div style={{ ...S.panel, padding: "14px 18px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Observations</div>
+                            {exp.bulletPoints.map((b: string, i: number) => (
+                              <div key={i} style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 6, paddingLeft: 14, position: "relative" }}>
+                                <span style={{ position: "absolute", left: 0, color: "var(--jt-accent)" }}>•</span>{b}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Resume rewrites */}
+                        {exp.resumeRewrites?.length > 0 && (
+                          <div style={{ ...S.panel, padding: "14px 18px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 12 }}>Suggested Rewrites</div>
+                            {exp.resumeRewrites.map((rw: any, i: number) => (
+                              <div key={i} style={{ marginBottom: 14 }}>
+                                <div style={{ fontSize: 12, color: "#f87171", textDecoration: "line-through", marginBottom: 4, opacity: 0.8 }}>{rw.original}</div>
+                                <div style={{ fontSize: 13, color: "#34d399", paddingLeft: 10, borderLeft: "2px solid #34d39940" }}>{rw.rewritten}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Action steps */}
+                        {exp.actionSteps?.length > 0 && (
+                          <div style={{ ...S.panel, padding: "14px 18px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--jt-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Action Steps</div>
+                            {exp.actionSteps.map((step: string, i: number) => (
+                              <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, fontSize: 13, lineHeight: 1.5 }}>
+                                <span style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "50%", background: "var(--jt-accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" }}>{i + 1}</span>
+                                {step}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Re-run button */}
+                        <button
+                          onClick={() => { setMatchResult(null); setMatchError(null); }}
+                          style={{ ...S.button("secondary"), width: "fit-content", fontSize: 13 }}
+                        >
+                          ↩ Re-run with different resume
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

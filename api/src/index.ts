@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { supabase, getAuthClient } from './lib/supabase';
 import { requireAuth } from './middleware/auth';
 import OpenAI from 'openai';
+import { parseJD, parseResume, computeHybridScore, generateExplanation } from './matcher';
 
 dotenv.config({ path: require('path').resolve(__dirname, '../.env') });
 
@@ -48,6 +49,20 @@ app.post('/applications', requireAuth, async (req, res) => {
     .single();
 
   if (error) return res.status(400).json({ success: false, error: error.message });
+
+  // Background: LLM-parse the JD if present — fires after response, zero latency impact
+  if (data?.id && payload.job_description?.trim().length > 50) {
+    setImmediate(async () => {
+      try {
+        const parsedJD = await parseJD(payload.job_description, getOpenAI());
+        await supabase.from('applications').update({ parsed_jd: parsedJD }).eq('id', data.id);
+        console.log(`[matcher] JD parsed (create) app=${data.id}: ${parsedJD.required.length} required, ${parsedJD.preferred.length} preferred`);
+      } catch (err: any) {
+        console.error('[matcher] Background JD parse failed (create):', err.message);
+      }
+    });
+  }
+
   res.json({ success: true, data });
 });
 
@@ -69,6 +84,19 @@ app.put('/applications/:id', requireAuth, async (req, res) => {
   if (error) {
     console.error('Application Update Error:', error.message);
     return res.status(400).json({ success: false, error: error.message });
+  }
+
+  // Background: re-parse JD if job_description was included in this update
+  if (data?.id && payload.job_description?.trim().length > 50) {
+    setImmediate(async () => {
+      try {
+        const parsedJD = await parseJD(payload.job_description, getOpenAI());
+        await supabase.from('applications').update({ parsed_jd: parsedJD }).eq('id', data.id);
+        console.log(`[matcher] JD parsed (update) app=${data.id}: ${parsedJD.required.length} required, ${parsedJD.preferred.length} preferred`);
+      } catch (err: any) {
+        console.error('[matcher] Background JD parse failed (update):', err.message);
+      }
+    });
   }
 
   console.log('Application updated:', id);
@@ -426,6 +454,18 @@ app.post('/resumes/:id/parse', requireAuth, async (req, res) => {
       return res.status(400).json({ success: false, error: updateError.message });
     }
 
+    // Background: LLM-extract structured skills + experience from resume text
+    // Stored in parsed_resume jsonb column — used by hybrid match scorer
+    setImmediate(async () => {
+      try {
+        const parsedResume = await parseResume(normalizedText, getOpenAI());
+        await supabase.from('resumes').update({ parsed_resume: parsedResume }).eq('id', id);
+        console.log(`[matcher] Resume skills parsed: ${id} | ${parsedResume.skills.length} skills | ${parsedResume.yearsExp ?? '?'} yrs exp`);
+      } catch (err: any) {
+        console.error('[matcher] Background resume parse failed:', err.message);
+      }
+    });
+
     console.log(`Resume parsed: ${id} | ${normalizedText.length} chars | hash: ${resumeHash}`);
     res.json({
       success: true,
@@ -461,127 +501,41 @@ app.patch('/resumes/:id/active', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
-// ─── MATCHING ─────────────────────────────────────────────────────────────────
-
-// Skill dictionaries for deterministic scoring
-const TECH_SKILLS = new Set([
-  'python','javascript','typescript','java','c++','c#','go','rust','scala','kotlin','swift','r','matlab',
-  'pytorch','tensorflow','keras','scikit-learn','huggingface','transformers','nlp','computer vision',
-  'deep learning','machine learning','reinforcement learning','neural network','bert','gpt','langchain',
-  'rag','vector database','embeddings','openai','sql','postgresql','mysql','mongodb','redis',
-  'elasticsearch','spark','kafka','airflow','dbt','pandas','numpy','tableau','powerbi','bigquery',
-  'snowflake','databricks','aws','gcp','azure','docker','kubernetes','terraform','github actions',
-  'react','next.js','node.js','express','fastapi','django','flask','graphql','rest api','git','linux',
-]);
-
-const SOFT_SKILLS = new Set([
-  'communication','leadership','collaboration','problem solving','agile','scrum',
-  'cross-functional','stakeholder','mentoring','ownership',
-]);
-
-function extractSkills(text: string): { tech: Set<string>; soft: Set<string> } {
-  const lower = text.toLowerCase();
-  const tech = new Set<string>();
-  const soft = new Set<string>();
-  for (const s of TECH_SKILLS) if (lower.includes(s)) tech.add(s);
-  for (const s of SOFT_SKILLS) if (lower.includes(s)) soft.add(s);
-  return { tech, soft };
-}
-
-function extractRequiredSkills(jdText: string): Set<string> {
-  const lower = jdText.toLowerCase();
-  const reqMatch = lower.match(/(?:required|must.have|minimum requirements?|qualifications?)[:\s]+([\s\S]{0,800})/i);
-  const searchText = reqMatch ? reqMatch[1] : lower;
-  const required = new Set<string>();
-  for (const s of TECH_SKILLS) if (searchText.includes(s)) required.add(s);
-  return required.size > 0 ? required : extractSkills(jdText).tech;
-}
-
-function extractYears(text: string): number | null {
-  const patterns = [
-    /(\d+)\+?\s*years?\s+of\s+experience/gi,
-    /(\d+)\+?\s*years?\s+experience/gi,
-    /minimum\s+(\d+)\s*years?/gi,
-  ];
-  for (const p of patterns) {
-    p.lastIndex = 0;
-    const m = p.exec(text);
-    if (m) return parseInt(m[1], 10);
-  }
-  return null;
-}
-
-function computeScore(resumeText: string, jdText: string) {
-  const resumeSkills = extractSkills(resumeText);
-  const jdSkills = extractSkills(jdText);
-  const jdRequired = extractRequiredSkills(jdText);
-
-  // Required skill overlap (35 pts)
-  const skillOverlap = jdRequired.size === 0 ? 18
-    : Math.round(([...jdRequired].filter(s => resumeSkills.tech.has(s)).length / jdRequired.size) * 35);
-
-  // Stack overlap (25 pts)
-  const stackOverlap = jdSkills.tech.size === 0 ? 12
-    : Math.round(([...jdSkills.tech].filter(s => resumeSkills.tech.has(s)).length / jdSkills.tech.size) * 25);
-
-  // Title similarity (20 pts) — check if JD title tokens appear in resume
-  const firstLine = jdText.slice(0, 200).split('\n')[0] || '';
-  const titleTokens = firstLine.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(t => t.length > 3);
-  const resumeLower = resumeText.toLowerCase();
-  const titleHits = titleTokens.filter(t => resumeLower.includes(t)).length;
-  const titleSimilarity = titleTokens.length > 0
-    ? Math.round(Math.min(1, titleHits / titleTokens.length) * 20) : 10;
-
-  // Experience gap penalty (max -15)
-  const jdYears = extractYears(jdText);
-  const resumeYears = extractYears(resumeText);
-  let experienceGap = 0;
-  if (jdYears !== null && resumeYears !== null) {
-    const gap = jdYears - resumeYears;
-    if (gap > 2) experienceGap = -15;
-    else if (gap > 1) experienceGap = -10;
-    else if (gap > 0) experienceGap = -5;
-  }
-
-  // Soft skills (5 pts)
-  const softSkills = jdSkills.soft.size === 0 ? 2
-    : Math.round(([...jdSkills.soft].filter(s => resumeSkills.soft.has(s)).length / jdSkills.soft.size) * 5);
-
-  const total = Math.max(0, Math.min(100, skillOverlap + stackOverlap + titleSimilarity + experienceGap + softSkills));
-
-  return {
-    score: Math.round(total),
-    breakdown: { skillOverlap, stackOverlap, titleSimilarity, experienceGap, softSkills },
-    matchedSkills: [...jdSkills.tech].filter(s => resumeSkills.tech.has(s)),
-    missingSkills: [...jdRequired].filter(s => !resumeSkills.tech.has(s)),
-  };
-}
+// ─── MATCHING (Hybrid Pipeline) ───────────────────────────────────────────────
+// Replaces the old hardcoded TECH_SKILLS keyword matching.
+// matcher.ts handles: LLM JD parsing, LLM resume parsing, pure-JS scoring, GPT narrative.
+// JD is pre-parsed on application save (see POST/PUT /applications above).
+// Resume is pre-parsed on parse button click (see POST /resumes/:id/parse above).
 
 // POST: Run match (or return cached result)
-// Body: { applicationId: string, jdText: string, resumeId?: string }
+// Body: { applicationId: string, jdText?: string, resumeId?: string }
+// jdText is optional — if omitted, uses the application's stored job_description
 app.post('/match', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
-  const { applicationId, jdText, resumeId } = req.body;
+  const { applicationId, jdText: bodyJD, resumeId } = req.body;
 
   if (!applicationId) return res.status(400).json({ success: false, error: 'applicationId is required' });
-  if (!jdText || jdText.trim().length < 50) {
-    return res.status(400).json({ success: false, error: 'jdText must be at least 50 characters' });
-  }
 
-  // Verify app ownership
-  const { data: app } = await supabase
+  // Fetch application — get stored JD text + pre-parsed JD if available
+  const { data: appRow } = await supabase
     .from('applications')
-    .select('id')
+    .select('id, job_description, parsed_jd')
     .eq('id', applicationId)
     .eq('user_id', userId)
     .single();
 
-  if (!app) return res.status(404).json({ success: false, error: 'Application not found' });
+  if (!appRow) return res.status(404).json({ success: false, error: 'Application not found' });
 
-  // Resolve resume — use specified or active one
+  // Resolve JD text — body takes priority (user pasted fresh), else use stored JD
+  const jdText = (bodyJD?.trim().length > 50 ? bodyJD : appRow.job_description) || '';
+  if (jdText.trim().length < 50) {
+    return res.status(400).json({ success: false, error: 'No job description found. Add a JD to this application first.', code: 'NO_JD' });
+  }
+
+  // Resolve resume — use specified or active one, fetching parsed_resume too
   let resumeQuery = supabase
     .from('resumes')
-    .select('id, extracted_text, resume_hash, file_name')
+    .select('id, extracted_text, resume_hash, file_name, parsed_resume')
     .eq('user_id', userId);
 
   resumeQuery = resumeId
@@ -594,15 +548,15 @@ app.post('/match', requireAuth, async (req, res) => {
     return res.status(404).json({ success: false, error: 'No resume found. Upload and parse a resume first.', code: 'NO_RESUME' });
   }
   if (!resume.extracted_text) {
-    return res.status(422).json({ success: false, error: 'Resume not parsed yet. Call POST /resumes/:id/parse first.', code: 'NOT_PARSED' });
+    return res.status(422).json({ success: false, error: 'Resume not parsed yet. Go to Files → click Parse on your resume.', code: 'NOT_PARSED' });
   }
 
-  // Compute JD hash for cache lookup
+  // Normalize JD + compute cache key
   const crypto = require('crypto');
   const jdNorm = jdText.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
   const jdHash = crypto.createHash('sha256').update(jdNorm.toLowerCase()).digest('hex').slice(0, 32);
 
-  // Check cache
+  // Check cache — same app + same resume + same JD = return cached result immediately
   const { data: cached } = await supabase
     .from('match_results')
     .select('*')
@@ -615,69 +569,49 @@ app.post('/match', requireAuth, async (req, res) => {
     return res.json({ success: true, data: cached, fromCache: true });
   }
 
-  // Compute deterministic score
-  const { score, breakdown, matchedSkills, missingSkills } = computeScore(resume.extracted_text, jdNorm);
+  // ── Hybrid Pipeline: get structured data ──
+  // Use pre-parsed versions if cached on the DB rows (fast, no LLM call)
+  // Fall back to live LLM parse if not yet available
+  const openai = getOpenAI();
 
-  // GPT-4o explanation
-  let explanation: any = null;
-  try {
-    const prompt = `You are a career coach reviewing a resume against a job description.
+  const [parsedJD, parsedResume] = await Promise.all([
+    appRow.parsed_jd && appRow.parsed_jd.required
+      ? Promise.resolve(appRow.parsed_jd)
+      : parseJD(jdNorm, openai),
+    resume.parsed_resume && resume.parsed_resume.skills
+      ? Promise.resolve(resume.parsed_resume)
+      : parseResume(resume.extracted_text, openai),
+  ]);
 
-MATCH SCORE: ${score}/100 (FINAL — do not suggest a different number)
+  // ── Pure JS scoring — zero LLM calls ──
+  const matchResult = computeHybridScore(parsedResume, parsedJD);
+  const { score, breakdown, matchedRequired, missingRequired, matchedPreferred, missingPreferred } = matchResult;
 
-SCORE BREAKDOWN:
-- Required skills: ${breakdown.skillOverlap}/35
-- Tech stack: ${breakdown.stackOverlap}/25
-- Title match: ${breakdown.titleSimilarity}/20
-- Experience gap: ${breakdown.experienceGap}
-- Soft skills: ${breakdown.softSkills}/5
+  // ── GPT writes the narrative only ──
+  const explanation = await generateExplanation(
+    score,
+    breakdown,
+    matchedRequired,
+    missingRequired,
+    matchedPreferred,
+    resume.extracted_text,
+    jdNorm,
+    openai
+  );
 
-MATCHED SKILLS: ${matchedSkills.slice(0, 12).join(', ') || 'none detected'}
-MISSING SKILLS: ${missingSkills.slice(0, 8).join(', ') || 'none'}
-
-RESUME (first 1500 chars):
-${resume.extracted_text.slice(0, 1500)}
-
-JOB DESCRIPTION (first 1500 chars):
-${jdNorm.slice(0, 1500)}
-
-Respond ONLY with valid JSON, no markdown:
-{
-  "summary": "2-3 sentence honest assessment",
-  "bulletPoints": ["observation 1", "observation 2", "observation 3"],
-  "resumeRewrites": [
-    { "original": "original bullet (approximate)", "rewritten": "stronger version tailored to this JD" },
-    { "original": "...", "rewritten": "..." },
-    { "original": "...", "rewritten": "..." }
-  ],
-  "actionSteps": ["step 1", "step 2", "step 3", "step 4"]
-}`;
-
-    const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 1000,
-      temperature: 0.3,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const raw = response.choices[0].message.content?.trim() || '';
-    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-    explanation = JSON.parse(clean);
-  } catch (err: any) {
-    console.error('GPT-4o explanation failed:', err.message);
-    explanation = {
-      summary: `This resume scores ${score}/100 for this role.`,
-      bulletPoints: [
-        `Matched skills: ${matchedSkills.slice(0, 5).join(', ') || 'none detected'}`,
-        `Missing skills: ${missingSkills.slice(0, 5).join(', ') || 'none'}`,
-        'AI explanation unavailable — check OPENAI_API_KEY2.',
-      ],
-      resumeRewrites: [],
-      actionSteps: ['Review missing skills and consider adding relevant experience to your resume.'],
-    };
+  // Persist any freshly-computed parsed data back to DB so next match is faster
+  if (!appRow.parsed_jd?.required) {
+    supabase.from('applications').update({ parsed_jd: parsedJD }).eq('id', applicationId).then(() =>
+      console.log(`[matcher] Cached parsedJD for app ${applicationId}`)
+    );
+  }
+  if (!resume.parsed_resume?.skills) {
+    supabase.from('resumes').update({ parsed_resume: parsedResume }).eq('id', resume.id).then(() =>
+      console.log(`[matcher] Cached parsedResume for resume ${resume.id}`)
+    );
   }
 
-  // Save to match_results
+  // Save full result to match_results
   const { data: saved, error: saveErr } = await supabase
     .from('match_results')
     .upsert({
@@ -688,9 +622,16 @@ Respond ONLY with valid JSON, no markdown:
       jd_hash: jdHash,
       score,
       score_breakdown: breakdown,
-      matched_skills: matchedSkills,
-      missing_skills: missingSkills,
-      explanation,
+      matched_skills: matchedRequired,       // required skills matched (primary display)
+      missing_skills: missingRequired,       // required skills missing (primary display)
+      explanation: {
+        ...explanation,
+        matchedPreferred,                    // bonus: preferred skills matched
+        missingPreferred,                    // bonus: preferred skills missing
+        parsedJDTitle: parsedJD.jobTitle,
+        yearsRequired: parsedJD.yearsExp,
+        yearsDetected: parsedResume.yearsExp,
+      },
       matched_at: new Date().toISOString(),
     }, { onConflict: 'application_id,resume_id,jd_hash' })
     .select()
@@ -698,14 +639,12 @@ Respond ONLY with valid JSON, no markdown:
 
   if (saveErr) console.error('Failed to save match result:', saveErr.message);
 
-  // Also store JD text on the application if empty
-  await supabase
-    .from('applications')
-    .update({ job_description: jdNorm })
-    .eq('id', applicationId)
-    .is('job_description', null);
+  // Backfill JD text on application row if it was empty
+  if (!appRow.job_description) {
+    await supabase.from('applications').update({ job_description: jdNorm }).eq('id', applicationId);
+  }
 
-  console.log(`Match computed: app=${applicationId} score=${score}`);
+  console.log(`[matcher] Match complete: app=${applicationId} score=${score} required=${matchedRequired.length}/${parsedJD.required.length}`);
   res.json({ success: true, data: saved, fromCache: false, resumeLabel: resume.file_name });
 });
 
