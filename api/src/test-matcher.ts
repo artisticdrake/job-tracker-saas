@@ -98,39 +98,39 @@ function section(title: string) { console.log(`\n${'─'.repeat(60)}\n  ${title}
 async function testParseJD(openai: OpenAI): Promise<ParsedJD> {
   section('TEST 1: parseJD()');
 
-  const result = await parseJD(SAMPLE_JD, openai);
+  const result = parseJD(SAMPLE_JD);
   console.log('\n  Raw output:');
   console.log(JSON.stringify(result, null, 4));
 
   // Assertions
-  if (result.required.length > 0) {
-    pass(`Extracted ${result.required.length} required skills`);
+  if (result.requiredSkills.length > 0) {
+    pass(`Extracted ${result.requiredSkills.length} required skills`);
   } else {
     fail('No required skills extracted');
   }
 
-  if (result.required.includes('python')) {
+  if (result.requiredSkills.includes('python')) {
     pass('"python" found in required skills');
   } else {
-    fail('"python" not found — LLM may not be extracting correctly');
+    fail('"python" not found in required skills');
   }
 
-  if (result.required.includes('pytorch')) {
+  if (result.requiredSkills.includes('pytorch')) {
     pass('"pytorch" found in required skills');
   } else {
     fail('"pytorch" not found in required skills');
   }
 
-  if (result.preferred.length > 0) {
-    pass(`Extracted ${result.preferred.length} preferred skills`);
+  if (result.preferredSkills.length > 0) {
+    pass(`Extracted ${result.preferredSkills.length} preferred skills`);
   } else {
     fail('No preferred skills extracted — "nice to have" section may have been missed');
   }
 
-  if (result.yearsExp === 3) {
-    pass(`yearsExp correctly extracted as ${result.yearsExp}`);
+  if (result.yearsRequired === 3) {
+    pass(`yearsRequired correctly extracted as ${result.yearsRequired}`);
   } else {
-    fail(`yearsExp = ${result.yearsExp}, expected 3`);
+    fail(`yearsRequired = ${result.yearsRequired}, expected 3`);
   }
 
   if (result.jobTitle.toLowerCase().includes('machine learning')) {
@@ -145,7 +145,7 @@ async function testParseJD(openai: OpenAI): Promise<ParsedJD> {
 async function testParseResume(openai: OpenAI): Promise<ParsedResume> {
   section('TEST 2: parseResume()');
 
-  const result = await parseResume(SAMPLE_RESUME, openai);
+  const result = parseResume(SAMPLE_RESUME);
   console.log('\n  Raw output:');
   console.log(JSON.stringify(result, null, 4));
 
@@ -164,10 +164,10 @@ async function testParseResume(openai: OpenAI): Promise<ParsedResume> {
     }
   }
 
-  if (result.yearsExp !== null && result.yearsExp >= 1) {
-    pass(`yearsExp detected: ${result.yearsExp} year(s)`);
+  if (result.yearsExperience !== null && result.yearsExperience >= 1) {
+    pass(`yearsExperience detected: ${result.yearsExperience} year(s)`);
   } else {
-    console.log(`  ⚠️  WARN: yearsExp = ${result.yearsExp} — may be expected for a student resume`);
+    console.log(`  ⚠️  WARN: yearsExperience = ${result.yearsExperience} — may be expected for a student resume`);
   }
 
   return result;
@@ -199,15 +199,15 @@ function testComputeScore(parsedJD: ParsedJD, parsedResume: ParsedResume) {
   }
 
   if (result.breakdown.requiredScore + result.breakdown.preferredScore + result.breakdown.experienceScore > 0) {
-    pass(`Breakdown sums correctly: req=${result.breakdown.requiredScore} pref=${result.breakdown.preferredScore} exp=${result.breakdown.experienceScore} penalty=${result.breakdown.experiencePenalty}`);
+    pass(`Breakdown sums correctly: req=${result.breakdown.requiredScore} depth=${result.breakdown.depthScore} pref=${result.breakdown.preferredScore} exp=${result.breakdown.experienceScore} edu=${result.breakdown.educationScore}`);
   }
 
   // Verify no double-counting — matched + missing should = total required
   const totalRequired = result.matchedRequired.length + result.missingRequired.length;
-  if (totalRequired === parsedJD.required.length) {
-    pass(`matched(${result.matchedRequired.length}) + missing(${result.missingRequired.length}) = total required(${parsedJD.required.length}) ✓`);
+  if (totalRequired === parsedJD.requiredSkills.length) {
+    pass(`matched(${result.matchedRequired.length}) + missing(${result.missingRequired.length}) = total required(${parsedJD.requiredSkills.length}) ✓`);
   } else {
-    fail(`Skill count mismatch: ${result.matchedRequired.length} + ${result.missingRequired.length} ≠ ${parsedJD.required.length}`);
+    fail(`Skill count mismatch: ${result.matchedRequired.length} + ${result.missingRequired.length} ≠ ${parsedJD.requiredSkills.length}`);
   }
 
   return result;
@@ -218,6 +218,7 @@ async function testExplanation(score: number, breakdown: any, matchedRequired: s
 
   const result = await generateExplanation(
     score,
+    'Strong',
     breakdown,
     matchedRequired,
     missingRequired,
@@ -262,9 +263,9 @@ async function testEdgeCases(openai: OpenAI) {
   // Edge case 1: JD with no "required" section — everything should go to required
   console.log('\n  [5a] JD with no explicit required/preferred separation...');
   const ambiguousJD = `Software Engineer needed. Must know JavaScript and React. Experience with Node.js and SQL databases helpful.`;
-  const result1 = await parseJD(ambiguousJD, openai);
-  if (result1.required.length > 0) {
-    pass(`Ambiguous JD: ${result1.required.length} skills extracted into required`);
+  const result1 = parseJD(ambiguousJD);
+  if (result1.requiredSkills.length > 0) {
+    pass(`Ambiguous JD: ${result1.requiredSkills.length} skills extracted into required`);
   } else {
     fail('Ambiguous JD: no skills extracted at all');
   }
@@ -272,17 +273,17 @@ async function testEdgeCases(openai: OpenAI) {
   // Edge case 2: No experience requirement in JD
   console.log('\n  [5b] JD with no years of experience stated...');
   const noExpJD = `Data Analyst. Skills needed: SQL, Python, Tableau, Excel. Join our team!`;
-  const result2 = await parseJD(noExpJD, openai);
-  if (result2.yearsExp === null) {
-    pass('yearsExp correctly null when not stated');
+  const result2 = parseJD(noExpJD);
+  if (result2.yearsRequired === null) {
+    pass('yearsRequired correctly null when not stated');
   } else {
-    console.log(`  ⚠️  WARN: yearsExp = ${result2.yearsExp} — expected null`);
+    console.log(`  ⚠️  WARN: yearsRequired = ${result2.yearsRequired} — expected null`);
   }
 
   // Edge case 3: Scoring with no preferred skills in JD
   console.log('\n  [5c] Score with no preferred skills...');
-  const jdNoPreferred: ParsedJD = { jobTitle: 'Dev', required: ['python', 'sql'], preferred: [], yearsExp: null };
-  const resumeData: ParsedResume = { skills: ['python', 'sql', 'react'], yearsExp: 3 };
+  const jdNoPreferred: ParsedJD = { jobTitle: 'Dev', requiredSkills: ['python', 'sql'], preferredSkills: [], yearsRequired: null, educationRequired: null, gatekeepers: [], sectionSplitWorked: false };
+  const resumeData: ParsedResume = { skills: ['python', 'sql', 'react'], skillsInContext: ['python', 'sql'], skillsListOnly: [], yearsExperience: 3, educationLevel: null };
   const score3 = computeHybridScore(resumeData, jdNoPreferred);
   if (score3.score > 50) {
     pass(`Score ${score3.score} with no preferred skills — reasonable (partial credit applied)`);
@@ -292,8 +293,8 @@ async function testEdgeCases(openai: OpenAI) {
 
   // Edge case 4: Score with zero matching skills
   console.log('\n  [5d] Score with zero matching skills...');
-  const jdNoMatch: ParsedJD = { jobTitle: 'Dev', required: ['cobol', 'fortran', 'assembly'], preferred: ['pascal'], yearsExp: 10 };
-  const resumeNoMatch: ParsedResume = { skills: ['python', 'javascript'], yearsExp: 1 };
+  const jdNoMatch: ParsedJD = { jobTitle: 'Dev', requiredSkills: ['cobol', 'fortran', 'assembly'], preferredSkills: ['pascal'], yearsRequired: 10, educationRequired: null, gatekeepers: [], sectionSplitWorked: false };
+  const resumeNoMatch: ParsedResume = { skills: ['python', 'javascript'], skillsInContext: ['python'], skillsListOnly: ['javascript'], yearsExperience: 1, educationLevel: null };
   const score4 = computeHybridScore(resumeNoMatch, jdNoMatch);
   if (score4.score < 30) {
     pass(`Low score ${score4.score} for no skill matches — correct`);

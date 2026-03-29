@@ -85,13 +85,13 @@ export default function MatchResult({ applicationId, existingJD = '', session }:
               <select value={selectedResumeId} onChange={e => setSelectedResumeId(e.target.value)}
                 style={{ width: '100%', padding: '10px 12px', background: 'var(--jt-panel)', border: '1px solid var(--jt-border)', borderRadius: 'var(--jt-radius)', color: 'var(--jt-text)', fontSize: 14, outline: 'none' }}>
                 {parsedResumes.map((r: any) => (
-                  <option key={r.id} value={r.id}>{r.file_name}{r.is_active ? ' ✓ active' : ''}</option>
+                  <option key={r.id} value={r.id}>{r.file_name}{r.is_active ? ' (active)' : ''}</option>
                 ))}
               </select>
             </div>
           ) : (
             <div style={{ padding: '12px 16px', borderRadius: 'var(--jt-radius)', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#f59e0b', fontSize: 13 }}>
-              {resumes.length === 0 ? '⚠ No resumes uploaded. Go to the Files tab first.' : '⚠ Resume not parsed yet. Go to Files tab → click "Parse" on your resume.'}
+              {resumes.length === 0 ? 'No resumes uploaded. Go to the Files tab first.' : 'Resume not parsed yet. Try re-uploading your resume in the Files tab.'}
             </div>
           )}
 
@@ -108,7 +108,7 @@ export default function MatchResult({ applicationId, existingJD = '', session }:
             style={{ padding: '11px 24px', background: (loading || parsedResumes.length === 0) ? 'var(--jt-panel)' : 'var(--jt-accent)', border: 'none', borderRadius: 'var(--jt-radius)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: (loading || parsedResumes.length === 0) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: 'fit-content' }}>
             {loading
               ? <><span style={{ width: 14, height: 14, border: '2px solid #ffffff40', borderTop: '2px solid #fff', borderRadius: '50%', display: 'inline-block', animation: 'jt-spin 0.8s linear infinite' }} /> Analyzing...</>
-              : '⚡ Run Match'}
+              : 'Run Match'}
           </button>
         </div>
       )}
@@ -124,7 +124,7 @@ export default function MatchResult({ applicationId, existingJD = '', session }:
             </div>
             {result.score_breakdown && (
               <div style={{ display: 'grid', gap: 7, minWidth: 210 }}>
-                {([['Skills (req)', result.score_breakdown.skillOverlap, 35], ['Tech Stack', result.score_breakdown.stackOverlap, 25], ['Title', result.score_breakdown.titleSimilarity, 20], ['Soft Skills', result.score_breakdown.softSkills, 5]] as [string,number,number][]).map(([label, val, max]) => (
+                {([['Required', result.score_breakdown.requiredScore, 45], ['Depth', result.score_breakdown.depthScore, 20], ['Preferred', result.score_breakdown.preferredScore, 15], ['Experience', result.score_breakdown.experienceScore, 12], ['Education', result.score_breakdown.educationScore, 8]] as [string,number,number][]).map(([label, val, max]) => (
                   <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ fontSize: 11, color: 'var(--jt-muted)', width: 84, flexShrink: 0 }}>{label}</div>
                     <div style={{ flex: 1, height: 5, background: 'var(--jt-bg)', borderRadius: 3, overflow: 'hidden' }}>
@@ -147,7 +147,7 @@ export default function MatchResult({ applicationId, existingJD = '', session }:
           {/* Skills grid */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div style={{ padding: '12px 14px', background: 'var(--jt-panel)', borderRadius: 'var(--jt-radius)' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>✓ Matched ({result.matched_skills?.length || 0})</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: '#34d399', display: 'inline-block', flexShrink: 0 }} />Matched ({result.matched_skills?.length || 0})</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                 {(result.matched_skills || []).slice(0, 12).map((s: string) => (
                   <span key={s} style={{ padding: '3px 8px', borderRadius: 999, fontSize: 11, background: 'rgba(52,211,153,0.1)', color: '#34d399', border: '1px solid rgba(52,211,153,0.25)' }}>{s}</span>
@@ -156,7 +156,7 @@ export default function MatchResult({ applicationId, existingJD = '', session }:
               </div>
             </div>
             <div style={{ padding: '12px 14px', background: 'var(--jt-panel)', borderRadius: 'var(--jt-radius)' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>✗ Missing ({result.missing_skills?.length || 0})</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f87171', display: 'inline-block', flexShrink: 0 }} />Missing ({result.missing_skills?.length || 0})</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                 {(result.missing_skills || []).slice(0, 12).map((s: string) => (
                   <span key={s} style={{ padding: '3px 8px', borderRadius: 999, fontSize: 11, background: 'rgba(248,113,113,0.1)', color: '#f87171', border: '1px solid rgba(248,113,113,0.25)' }}>{s}</span>
@@ -207,7 +207,7 @@ export default function MatchResult({ applicationId, existingJD = '', session }:
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <button onClick={() => { setResult(null); setFromCache(false); }}
               style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--jt-border)', borderRadius: 'var(--jt-radius)', color: 'var(--jt-muted)', fontSize: 13, cursor: 'pointer' }}>
-              ↩ Update JD & Re-run
+              ← Update JD & Re-run
             </button>
             {fromCache && <span style={{ fontSize: 12, color: 'var(--jt-muted)' }}>Cached — update JD to recompute</span>}
           </div>

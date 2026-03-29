@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(powershell -Command \":*)"
+      "Bash(powershell -Command \":*)",
+      "Bash(npx tsx:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

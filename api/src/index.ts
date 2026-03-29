@@ -497,10 +497,10 @@ app.post('/match', requireAuth, async (req, res) => {
   if (!resume) return res.status(404).json({ success: false, error: 'No resume found. Upload and parse a resume first.', code: 'NO_RESUME' });
   if (!resume.extracted_text) return res.status(422).json({ success: false, error: 'Resume not parsed yet. Click Parse on your resume in the Files tab.', code: 'NOT_PARSED' });
 
-  // Compute JD hash for cache lookup
+  // Compute JD hash for cache lookup — 'v2' prefix busts old algorithm cache entries
   const crypto = require('crypto');
   const jdNorm = app.job_description.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
-  const jdHash = crypto.createHash('sha256').update(jdNorm.toLowerCase()).digest('hex').slice(0, 32);
+  const jdHash = 'v2' + crypto.createHash('sha256').update(jdNorm.toLowerCase()).digest('hex').slice(0, 30);
 
   // Check cache
   const { data: cached } = await supabase
@@ -515,21 +515,24 @@ app.post('/match', requireAuth, async (req, res) => {
 
   const openai = getOpenAI();
 
-  // Parse JD and resume in parallel (use cached parsed data if available)
-  const [parsedJD, parsedResume] = await Promise.all([
-    app.parsed_jd
-      ? Promise.resolve(app.parsed_jd)
-      : parseJD(jdNorm, openai),
-    resume.parsed_resume
-      ? Promise.resolve(resume.parsed_resume)
-      : parseResume(resume.extracted_text, openai),
-  ]);
+  // Type guards: check if cached parsed data uses the v2 pure-JS format.
+  // Old LLM-parsed rows have { required, preferred, yearsExp } — incompatible with new scorer.
+  // Stale rows will re-parse instantly (sync, ~1ms) and be written back below.
+  function isParsedJDV2(obj: any): boolean {
+    return obj && Array.isArray(obj.requiredSkills) && 'yearsRequired' in obj;
+  }
+  function isParsedResumeV2(obj: any): boolean {
+    return obj && Array.isArray(obj.skillsInContext) && 'yearsExperience' in obj;
+  }
 
-  // Persist parsed data back to DB so future matches are faster
-  if (!app.parsed_jd) {
+  const parsedJD     = isParsedJDV2(app.parsed_jd)          ? app.parsed_jd          : parseJD(jdNorm);
+  const parsedResume = isParsedResumeV2(resume.parsed_resume) ? resume.parsed_resume   : parseResume(resume.extracted_text);
+
+  // Persist freshly-parsed data back to DB so future matches are faster
+  if (!isParsedJDV2(app.parsed_jd)) {
     supabase.from('applications').update({ parsed_jd: parsedJD }).eq('id', applicationId).then(() => {});
   }
-  if (!resume.parsed_resume) {
+  if (!isParsedResumeV2(resume.parsed_resume)) {
     supabase.from('resumes').update({ parsed_resume: parsedResume }).eq('id', resume.id).then(() => {});
   }
 
@@ -539,6 +542,7 @@ app.post('/match', requireAuth, async (req, res) => {
   // GPT narrative — score is already locked, GPT only writes explanation
   const explanation = await generateExplanation(
     matchResult.score,
+    matchResult.label,
     matchResult.breakdown,
     matchResult.matchedRequired,
     matchResult.missingRequired,
@@ -566,8 +570,10 @@ app.post('/match', requireAuth, async (req, res) => {
         matchedPreferred: matchResult.matchedPreferred,
         missingPreferred: matchResult.missingPreferred,
         parsedJDTitle: parsedJD.jobTitle,
-        yearsRequired: parsedJD.yearsExp,
-        yearsDetected: parsedResume.yearsExp,
+        yearsRequired: parsedJD.yearsRequired,
+        yearsDetected: parsedResume.yearsExperience,
+        label: matchResult.label,
+        gatekeepers: matchResult.gatekeepers,
       },
       matched_at: new Date().toISOString(),
     }, { onConflict: 'application_id,resume_id,jd_hash' })
@@ -576,7 +582,7 @@ app.post('/match', requireAuth, async (req, res) => {
 
   if (saveErr) console.error('Failed to save match result:', saveErr.message);
 
-  console.log(`Match computed: app=${applicationId} score=${matchResult.score} required_matched=${matchResult.matchedRequired.length}/${parsedJD.required.length}`);
+  console.log(`Match computed: app=${applicationId} score=${matchResult.score} label=${matchResult.label} required_matched=${matchResult.matchedRequired.length}/${parsedJD.requiredSkills.length}`);
   res.json({ success: true, data: saved, fromCache: false, resumeLabel: resume.file_name });
 
 });

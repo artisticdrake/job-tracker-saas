@@ -130,18 +130,18 @@ async function main() {
   // ── 5. Run parseResume() ──
   console.log('\n── Running parseResume() via GPT-4o-mini ───────────────');
   const start = Date.now();
-  const parsed = await parseResume(rawText, openai);
+  const parsed = parseResume(rawText);
   const elapsed = Date.now() - start;
 
   console.log(`Done in ${elapsed}ms`);
   console.log(`Skills extracted: ${parsed.skills.length}`);
-  console.log(`Years experience: ${parsed.yearsExp ?? 'not detected'}`);
+  console.log(`Years experience: ${parsed.yearsExperience ?? 'not detected'}`);
   console.log(`Skills: ${parsed.skills.join(', ')}`);
 
   // ── 6. Diagnose what the LLM missed ──
   diagLines.push('\nSkill extraction by LLM (parseResume):');
   diagLines.push(`  Total extracted: ${parsed.skills.length}`);
-  diagLines.push(`  Years exp: ${parsed.yearsExp ?? 'null'}`);
+  diagLines.push(`  Years exp: ${parsed.yearsExperience ?? 'null'}`);
   diagLines.push(`  Skills: ${parsed.skills.join(', ')}`);
   diagLines.push('');
   diagLines.push('Skills in raw text but MISSED by LLM:');

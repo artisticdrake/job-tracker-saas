@@ -1,46 +1,58 @@
 /**
- * matcher.ts — Hybrid Extraction Pipeline
+ * matcher.ts — Pure-JS Hybrid Matching Pipeline (v2)
  *
  * Architecture:
- *   1. parseJD(jdText)       → LLM extracts structured JD data (run once per JD, cache result)
- *   2. parseResume(text)     → LLM extracts structured resume data (run once per upload)
- *   3. computeHybridScore()  → Pure JS comparison of the two JSON objects
- *   4. generateExplanation() → GPT writes narrative from the already-computed score
- *
- * Drop-in for the current index.ts match section.
- * Import: import { parseJD, parseResume, computeHybridScore, generateExplanation } from './matcher'
+ *   1. parseJD(jdText)        → Pure JS, no LLM. Regex + skill dictionary.
+ *   2. parseResume(text)      → Pure JS, no LLM. Section-aware skill extraction.
+ *   3. computeHybridScore()   → Weighted 5-component scorer (100 pts total).
+ *   4. generateExplanation()  → GPT-4o-mini writes narrative from locked score.
  */
 
 import OpenAI from 'openai';
+import {
+  scanText,
+  applyImpliedSkills,
+  deduplicateImplied,
+  getWeight,
+} from './lib/skillDictionary';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ParsedJD {
-  required: string[];       // Must-have skills/techs
-  preferred: string[];      // Nice-to-have skills/techs
-  yearsExp: number | null;  // Required years of experience
-  jobTitle: string;         // Extracted job title
+  jobTitle: string;
+  requiredSkills: string[];
+  preferredSkills: string[];
+  yearsRequired: number | null;
+  educationRequired: 'high_school' | 'bachelors' | 'masters' | 'phd' | null;
+  gatekeepers: string[];
+  sectionSplitWorked: boolean;
 }
 
 export interface ParsedResume {
-  skills: string[];         // All skills/techs found
-  yearsExp: number | null;  // Calculated total years of experience
+  skills: string[];
+  skillsInContext: string[];    // proven in experience/project bullets
+  skillsListOnly: string[];     // only in skills section (weaker evidence)
+  yearsExperience: number | null;
+  educationLevel: 'high_school' | 'bachelors' | 'masters' | 'phd' | null;
 }
 
 export interface ScoreBreakdown {
-  requiredScore: number;    // 0–50: required skills matched
-  preferredScore: number;   // 0–30: preferred skills matched
-  experienceScore: number;  // 0–20: experience match
-  experiencePenalty: number;// 0 to -15: penalty if under-qualified
+  requiredScore: number;    // 0–45 (or 0–32 when dynamic)
+  depthScore: number;       // 0–20
+  preferredScore: number;   // 0–15 (or 0–28 when dynamic)
+  experienceScore: number;  // 0–12
+  educationScore: number;   // 0–8
 }
 
 export interface MatchResult {
-  score: number;                  // 0–100 final
+  score: number;
+  label: 'Excellent' | 'Strong' | 'Good' | 'Partial' | 'Weak';
   breakdown: ScoreBreakdown;
-  matchedRequired: string[];      // Required skills found in resume
-  missingRequired: string[];      // Required skills NOT in resume
-  matchedPreferred: string[];     // Preferred skills found in resume
-  missingPreferred: string[];     // Preferred skills NOT in resume
+  matchedRequired: string[];
+  missingRequired: string[];
+  matchedPreferred: string[];
+  missingPreferred: string[];
+  gatekeepers: string[];
 }
 
 export interface Explanation {
@@ -50,219 +62,378 @@ export interface Explanation {
   actionSteps: string[];
 }
 
-// ─── Step 1: Parse JD ─────────────────────────────────────────────────────────
+// ─── JD Parser ────────────────────────────────────────────────────────────────
 
-/**
- * Sends the raw JD text to GPT-4o-mini.
- * Returns structured JSON: required skills, preferred skills, years of exp, job title.
- * Call this once when a user saves/updates a job — cache result on the application row.
- */
-export async function parseJD(jdText: string, openai: OpenAI): Promise<ParsedJD> {
-  const prompt = `You are a technical recruiter parsing a job description.
+const REQUIRED_HEADINGS = [
+  /\brequired\s*(qualifications?|skills?|experience|knowledge)?\s*[:\-]?\s*$/i,
+  /\bmust[\s-]have\b/i,
+  /\bminimum\s*(qualifications?|requirements?|experience)\b/i,
+  /\bbasic\s*qualifications?\b/i,
+  /\bwhat\s+you('ll)?\s+(need|bring|have)\b/i,
+  /\byou\s+(must|will)\s+(have|need)\b/i,
+  /\bqualifications?\s*[:\-]\s*$/i,
+  /^knowledge\s+and\s+experience\s*[:\-]?\s*$/i,
+  /\btechnical\s+skills?\s*[:\-]\s*$/i,
+  /\bcore\s+requirements?\s*[:\-]?\s*$/i,
+  /\bposition\s+requirements?\s*[:\-]?\s*$/i,
+  /\byour\s+(background|qualifications?|skills?|experience)\s*[:\-]?\s*$/i,
+  /\bwho\s+you\s+are\b/i,
+  /\bwhat\s+we('re|\s+are)\s+looking\s+for\b/i,
+  /\bjob\s+requirements?\s*[:\-]?\s*$/i,
+];
 
-Extract the following from this job description and return ONLY valid JSON, no markdown, no explanation:
+const PREFERRED_HEADINGS = [
+  /\bpreferred\b/i,
+  /\bnice[\s-]to[\s-]have\b/i,
+  /\bbonus\s*(points?)?\b/i,
+  /\bdesired\b/i,
+  /\bideal\s*(candidate|qualifications?)?\b/i,
+  /\badditional\s*(knowledge|experience|qualifications?|skills?)\b/i,
+  /\bwould\s+be\s+(a\s+)?(plus|great|nice|bonus)\b/i,
+];
 
-{
-  "jobTitle": "exact job title from the posting",
-  "required": ["skill1", "skill2"],
-  "preferred": ["skill3", "skill4"],
-  "yearsExp": 3
-}
+const GATEKEEPER_PATTERNS = [
+  { pattern: /citizenship|authorized to work|work authorization|eligible to work|right to work/i, label: 'Work authorization / citizenship required' },
+  { pattern: /security clearance|secret clearance|top secret|ts\/sci/i,                           label: 'Security clearance required' },
+  { pattern: /must be.{0,30}(us|u\.s\.)\s*(citizen|national|resident)/i,                         label: 'US citizenship required' },
+  { pattern: /drug (test|screen|screening)/i,                                                      label: 'Drug screening required' },
+  { pattern: /background check|criminal (history|background)/i,                                   label: 'Background check required' },
+  { pattern: /on[\s-]?site|in[\s-]?office|in[\s-]person/i,                                       label: 'On-site / location requirement' },
+  { pattern: /years?\s+(of\s+)?(us|u\.s\.)\s+residen/i,                                          label: 'US residency requirement' },
+];
 
-Rules:
-- Extract BOTH specific tools AND broad domain terms:
-  * "experience with machine learning" → include "machine learning"
-  * "deep learning frameworks" → include "deep learning" AND specific frameworks mentioned
-  * "data visualization tools" → include "data visualization"
-  * "NLP or text processing" → include "nlp" AND "natural language processing"
-  * "statistical modeling" → include "statistical modeling"
-  * "computer vision" → include "computer vision"
-  * "data analysis" → include "data analysis"
-  * "data science background" → include "data science"
-  * "data engineering" → include "data engineering"
-- "required": skills/technologies that are EXPLICITLY required (look for: "required", "must have", "minimum", "qualifications", "you will need")
-- "preferred": skills/technologies that are desired but not mandatory (look for: "preferred", "nice to have", "bonus", "plus", "ideally")
-- If a skill appears in both sections, put it ONLY in "required"
-- "yearsExp": the MINIMUM years of experience required as an integer, or null if not specified
-- All skills lowercase. Include up to 20 required and 15 preferred.
-- If you cannot distinguish required from preferred, put everything in "required"
+const SKIP_TITLE_PATTERNS = [
+  /^(principal|key|core)\s+accountabilit/i,
+  /^(knowledge|experience|education|supervision|overview|about|summary|responsibilities|requirements)/i,
+  /^(job\s+)?description$/i,
+  /^position\s+(overview|summary|details)$/i,
+];
 
-JOB DESCRIPTION:
-${jdText.slice(0, 4000)}`;
+const MAX_REQUIRED_FALLBACK = 12;
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
-      max_tokens: 600,
-      temperature: 0.1, // Low temp for structured extraction
-      messages: [{ role: 'user', content: prompt }],
-    });
+function splitJDSections(text: string): { required: string; preferred: string; worked: boolean } {
+  const lines = text.split('\n');
+  const sections: { type: 'required' | 'preferred' | 'other'; lines: string[] }[] = [];
+  let currentType: 'required' | 'preferred' | 'other' = 'other';
+  let currentLines: string[] = [];
+  let foundAny = false;
 
-    const raw = response.choices[0].message.content?.trim() || '';
-    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-    const parsed = JSON.parse(clean);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const isReq  = REQUIRED_HEADINGS.some(p => p.test(trimmed))  && trimmed.length < 80;
+    const isPref = PREFERRED_HEADINGS.some(p => p.test(trimmed)) && trimmed.length < 80;
 
-    return {
-      jobTitle: (parsed.jobTitle || '').trim(),
-      required: Array.isArray(parsed.required) ? parsed.required.map((s: string) => s.toLowerCase().trim()) : [],
-      preferred: Array.isArray(parsed.preferred) ? parsed.preferred.map((s: string) => s.toLowerCase().trim()) : [],
-      yearsExp: typeof parsed.yearsExp === 'number' ? parsed.yearsExp : null,
-    };
-  } catch (err: any) {
-    console.error('[matcher] parseJD failed:', err.message);
-    // Graceful fallback — return empty structure so match can still proceed
-    return { jobTitle: '', required: [], preferred: [], yearsExp: null };
-  }
-}
-
-// ─── Step 2: Parse Resume ─────────────────────────────────────────────────────
-
-/**
- * Sends extracted resume text to GPT-4o-mini.
- * Returns structured JSON: all skills found + calculated years of experience.
- * Call this once when a user hits "Parse" on a resume — cache result on the resume row.
- *
- * NOTE: The existing /resumes/:id/parse endpoint already extracts plain text from PDF/DOCX.
- * This function is the NEW second step: LLM-parse that extracted text into structured data.
- * Store the result in a new column `parsed_data jsonb` on the resumes table.
- */
-export async function parseResume(resumeText: string, openai: OpenAI): Promise<ParsedResume> {
-  const prompt = `You are a technical recruiter parsing a resume.
-
-Extract the following and return ONLY valid JSON, no markdown, no explanation:
-
-{
-  "skills": ["skill1", "skill2", "skill3"],
-  "yearsExp": 3
-}
-
-Rules:
-- "skills": Extract TWO types of terms — specific tools AND broad domain categories:
-  TYPE 1 - Specific tools/libraries (always include): "pytorch", "tensorflow", "scikit-learn", "opencv", "pandas", "react", "docker", "aws", etc.
-  TYPE 2 - Domain/category terms (ALWAYS include these if the resume implies them):
-    * If resume mentions PyTorch, TensorFlow, Keras, neural networks → add "deep learning"
-    * If resume mentions scikit-learn, XGBoost, Random Forest, ML models → add "machine learning"
-    * If resume mentions OpenCV, YOLO, image processing, computer vision → add "computer vision"
-    * If resume mentions NLTK, spaCy, HuggingFace, LangChain, text processing → add "nlp" AND "natural language processing"
-    * If resume mentions pandas, numpy, matplotlib, data analysis tasks → add "data analysis" AND "data visualization"
-    * If resume mentions pipelines, ETL, data workflows → add "data engineering"
-    * If resume explicitly lists "Data Science", "Machine Learning", "Deep Learning" as a skill → ALWAYS include it verbatim
-    * If resume mentions statistical analysis, regression, modeling → add "statistical modeling" AND "statistics"
-  Include up to 60 skills total. Lowercase everything.
-- "yearsExp": Calculate total professional experience in years from work history dates. Student with internships counts. Return as integer or null if not determinable.
-- Do NOT include soft skills, company names, or job titles
-
-RESUME TEXT:
-${resumeText.slice(0, 4000)}`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
-      max_tokens: 500,
-      temperature: 0.1,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const raw = response.choices[0].message.content?.trim() || '';
-    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-    const parsed = JSON.parse(clean);
-
-    return {
-      skills: Array.isArray(parsed.skills) ? parsed.skills.map((s: string) => s.toLowerCase().trim()) : [],
-      yearsExp: typeof parsed.yearsExp === 'number' ? parsed.yearsExp : null,
-    };
-  } catch (err: any) {
-    console.error('[matcher] parseResume failed:', err.message);
-    return { skills: [], yearsExp: null };
-  }
-}
-
-// ─── Step 3: Pure JS Score Computation ───────────────────────────────────────
-
-/**
- * No LLM calls. Pure JavaScript set comparison.
- * Takes the two parsed JSON objects and returns a deterministic score.
- *
- * Scoring weights:
- *   Required skills:   50 pts  (most important — "can you do the job?")
- *   Preferred skills:  30 pts  (differentiator — "are you a great fit?")
- *   Experience:        20 pts  (baseline qualifier)
- *   Experience penalty: -15    (if significantly under-qualified)
- */
-export function computeHybridScore(resume: ParsedResume, jd: ParsedJD): MatchResult {
-  const resumeSkillSet = new Set(resume.skills);
-
-  // ── Required skills (50 pts) ──
-  const matchedRequired = jd.required.filter(s => resumeSkillSet.has(s));
-  const missingRequired = jd.required.filter(s => !resumeSkillSet.has(s));
-
-  const requiredScore = jd.required.length === 0
-    ? 35  // No required skills listed — give partial credit (not a perfect 50, since we can't verify)
-    : Math.round((matchedRequired.length / jd.required.length) * 50);
-
-  // ── Preferred skills (30 pts) ──
-  const matchedPreferred = jd.preferred.filter(s => resumeSkillSet.has(s));
-  const missingPreferred = jd.preferred.filter(s => !resumeSkillSet.has(s));
-
-  const preferredScore = jd.preferred.length === 0
-    ? 15  // No preferred skills listed — give partial credit
-    : Math.round((matchedPreferred.length / jd.preferred.length) * 30);
-
-  // ── Experience (20 pts + penalty) ──
-  let experienceScore = 10; // Default: neutral if neither side has data
-  let experiencePenalty = 0;
-
-  if (jd.yearsExp !== null && resume.yearsExp !== null) {
-    const gap = jd.yearsExp - resume.yearsExp;
-
-    if (gap <= 0) {
-      // Meets or exceeds requirement
-      experienceScore = 20;
-    } else if (gap <= 1) {
-      // 1 year short — close enough
-      experienceScore = 15;
-      experiencePenalty = -5;
-    } else if (gap <= 2) {
-      // 2 years short — notable gap
-      experienceScore = 8;
-      experiencePenalty = -10;
+    if (isReq) {
+      if (currentLines.length) sections.push({ type: currentType, lines: currentLines });
+      currentType = 'required'; currentLines = []; foundAny = true;
+    } else if (isPref) {
+      if (currentLines.length) sections.push({ type: currentType, lines: currentLines });
+      currentType = 'preferred'; currentLines = []; foundAny = true;
     } else {
-      // 3+ years short — significant gap
-      experienceScore = 3;
-      experiencePenalty = -15;
+      currentLines.push(line);
     }
-  } else if (jd.yearsExp === null) {
-    // No requirement stated — full experience score
-    experienceScore = 20;
   }
-
-  const rawTotal = requiredScore + preferredScore + experienceScore + experiencePenalty;
-  const score = Math.max(0, Math.min(100, Math.round(rawTotal)));
+  if (currentLines.length) sections.push({ type: currentType, lines: currentLines });
 
   return {
-    score,
-    breakdown: {
-      requiredScore,
-      preferredScore,
-      experienceScore,
-      experiencePenalty,
-    },
+    required: sections.filter(s => s.type === 'required').map(s => s.lines.join('\n')).join('\n').trim(),
+    preferred: sections.filter(s => s.type === 'preferred').map(s => s.lines.join('\n')).join('\n').trim(),
+    worked: foundAny,
+  };
+}
+
+function extractYearsRequired(text: string): number | null {
+  const patterns = [
+    /(\d+)\+?\s*(?:or more\s+)?years?\s+of\s+(?:relevant\s+|related\s+|professional\s+)?experience/gi,
+    /(\d+)\+?\s*years?\s+experience/gi,
+    /minimum\s+(?:of\s+)?(\d+)\s*years?/gi,
+    /at\s+least\s+(\d+)\s*years?/gi,
+  ];
+  let min: number | null = null;
+  for (const p of patterns) {
+    p.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = p.exec(text)) !== null) {
+      const v = parseInt(m[1], 10);
+      if (!isNaN(v) && v <= 20 && (min === null || v < min)) min = v;
+    }
+  }
+  return min;
+}
+
+function extractEducationRequired(text: string): ParsedJD['educationRequired'] {
+  const lower = text.toLowerCase();
+  if (/\bph\.?d\b|\bdoctorate\b|\bdoctoral\b/.test(lower)) return 'phd';
+  if (/\bmaster'?s?\b|\bm\.s\.?\b|\bm\.eng\b|\bmba\b/.test(lower)) return 'masters';
+  if (/\bbachelor'?s?\b|\bb\.s\.?\b|\bb\.a\.?\b|\bundergraduate\b/.test(lower)) return 'bachelors';
+  if (/\bhigh school\b|\bged\b/.test(lower)) return 'high_school';
+  return null;
+}
+
+function extractJobTitle(text: string): string {
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (
+      t.length > 3 &&
+      t.length < 80 &&
+      !t.includes('.') &&
+      !/^(as a|we are|about|our|the company)/i.test(t) &&
+      !SKIP_TITLE_PATTERNS.some(p => p.test(t))
+    ) return t;
+  }
+  return '';
+}
+
+export function parseJD(jdText: string): ParsedJD {
+  const { required: reqSection, preferred: prefSection, worked } = splitJDSections(jdText);
+
+  let requiredRaw: Set<string>;
+  let preferredRaw: Set<string>;
+
+  if (worked) {
+    requiredRaw  = applyImpliedSkills(scanText(reqSection || jdText));
+    preferredRaw = applyImpliedSkills(scanText(prefSection));
+  } else {
+    const allFound = applyImpliedSkills(scanText(jdText));
+    const ranked   = [...allFound].sort((a, b) => getWeight(b) - getWeight(a));
+    requiredRaw    = new Set(ranked.slice(0, MAX_REQUIRED_FALLBACK));
+    preferredRaw   = new Set(ranked.slice(MAX_REQUIRED_FALLBACK));
+  }
+
+  const requiredDeduped  = deduplicateImplied(requiredRaw);
+  const preferredDeduped = deduplicateImplied(preferredRaw);
+
+  // Core-skill promotion: if required < 8 skills but preferred has weight=3 skills,
+  // promote them — they are gate skills regardless of where the JD author placed them.
+  if (requiredDeduped.size < 8 && preferredDeduped.size > 0) {
+    for (const skill of [...preferredDeduped]) {
+      if (getWeight(skill) === 3) {
+        requiredDeduped.add(skill);
+        preferredDeduped.delete(skill);
+      }
+    }
+  }
+
+  const preferredFinal = new Set([...preferredDeduped].filter(s => !requiredDeduped.has(s)));
+  const sortByWeight = (a: string, b: string) => getWeight(b) - getWeight(a);
+
+  return {
+    jobTitle:           extractJobTitle(jdText),
+    requiredSkills:     [...requiredDeduped].sort(sortByWeight),
+    preferredSkills:    [...preferredFinal].sort(sortByWeight),
+    yearsRequired:      extractYearsRequired(jdText),
+    educationRequired:  extractEducationRequired(jdText),
+    gatekeepers:        GATEKEEPER_PATTERNS.filter(g => g.pattern.test(jdText)).map(g => g.label),
+    sectionSplitWorked: worked,
+  };
+}
+
+// ─── Resume Parser ────────────────────────────────────────────────────────────
+
+const EXPERIENCE_HEADINGS = [
+  /^\s*(work\s+)?experience\s*[:\-]?\s*$/i,
+  /^\s*employment(\s+history)?\s*[:\-]?\s*$/i,
+  /^\s*professional\s+(experience|background)\s*[:\-]?\s*$/i,
+  /^\s*(relevant\s+)?projects?\s*[:\-]?\s*$/i,
+  /^\s*research\s+(experience|projects?)\s*[:\-]?\s*$/i,
+];
+
+const SKILLS_SECTION_HEADINGS = [
+  /^\s*(technical\s+)?skills?\s*[:\-]?\s*$/i,
+  /^\s*core\s+competencies\s*[:\-]?\s*$/i,
+  /^\s*technologies?\s*[:\-]?\s*$/i,
+  /^\s*tools?\s+(&\s+technologies?)?\s*[:\-]?\s*$/i,
+];
+
+const EDUCATION_HEADINGS = [
+  /^\s*education(\s+&\s+training)?\s*[:\-]?\s*$/i,
+  /^\s*academic\s+background\s*[:\-]?\s*$/i,
+];
+
+function splitResumeSections(text: string): { experience: string; skills: string; education: string } {
+  type T = 'experience' | 'skills' | 'education' | 'other';
+  const sections: { type: T; lines: string[] }[] = [];
+  let currentType: T = 'other';
+  let currentLines: string[] = [];
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    const isExp   = EXPERIENCE_HEADINGS.some(p => p.test(trimmed))     && trimmed.length < 60;
+    const isSkill = SKILLS_SECTION_HEADINGS.some(p => p.test(trimmed)) && trimmed.length < 60;
+    const isEdu   = EDUCATION_HEADINGS.some(p => p.test(trimmed))      && trimmed.length < 60;
+
+    if      (isExp)   { if (currentLines.length) sections.push({ type: currentType, lines: currentLines }); currentType = 'experience'; currentLines = []; }
+    else if (isSkill) { if (currentLines.length) sections.push({ type: currentType, lines: currentLines }); currentType = 'skills';     currentLines = []; }
+    else if (isEdu)   { if (currentLines.length) sections.push({ type: currentType, lines: currentLines }); currentType = 'education';  currentLines = []; }
+    else { currentLines.push(line); }
+  }
+  if (currentLines.length) sections.push({ type: currentType, lines: currentLines });
+
+  return {
+    experience: sections.filter(s => s.type === 'experience').map(s => s.lines.join('\n')).join('\n').trim(),
+    skills:     sections.filter(s => s.type === 'skills').map(s => s.lines.join('\n')).join('\n').trim(),
+    education:  sections.filter(s => s.type === 'education').map(s => s.lines.join('\n')).join('\n').trim(),
+  };
+}
+
+function extractYearsExperience(text: string): number | null {
+  const rangePattern = /(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+)?(\d{4})\s*[-–—]\s*(present|current|now|(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+)?(\d{4}))/gi;
+  const currentYear = new Date().getFullYear();
+  let earliest: number | null = null;
+  let latest: number | null = null;
+  let m: RegExpExecArray | null;
+
+  while ((m = rangePattern.exec(text)) !== null) {
+    const start = parseInt(m[1], 10);
+    const endStr = m[2].toLowerCase();
+    const end = /present|current|now/.test(endStr) ? currentYear : parseInt(m[3] || m[2], 10);
+    if (!isNaN(start) && start >= 1990 && start <= currentYear) {
+      if (earliest === null || start < earliest) earliest = start;
+    }
+    if (!isNaN(end) && end >= 1990 && end <= currentYear + 1) {
+      if (latest === null || end > latest) latest = end;
+    }
+  }
+
+  if (earliest !== null && latest !== null) return Math.max(0, latest - earliest);
+
+  const stated = /(\d+)\+?\s+years?\s+of\s+(?:professional\s+)?experience/i.exec(text);
+  if (stated) return parseInt(stated[1], 10);
+
+  return null;
+}
+
+function extractEducationLevel(text: string): ParsedResume['educationLevel'] {
+  const lower = text.toLowerCase();
+  if (/\bph\.?d\b|\bdoctorate\b|\bdoctoral\b/.test(lower)) return 'phd';
+  if (/\bmaster'?s?\b|\bm\.s\.?\b|\bm\.eng\b|\bmba\b/.test(lower)) return 'masters';
+  if (/\bbachelor'?s?\b|\bb\.s\.?\b|\bb\.a\.?\b|\bundergraduate\b/.test(lower)) return 'bachelors';
+  if (/\bhigh school\b|\bged\b/.test(lower)) return 'high_school';
+  return null;
+}
+
+export function parseResume(resumeText: string): ParsedResume {
+  const sections = splitResumeSections(resumeText);
+  const expText    = sections.experience || resumeText;
+  const skillsText = sections.skills     || '';
+
+  const inContextExpanded = applyImpliedSkills(scanText(expText));
+  const listedExpanded    = applyImpliedSkills(scanText(skillsText));
+  const allExpanded       = applyImpliedSkills(scanText(resumeText));
+
+  const allSkills       = [...allExpanded].sort();
+  const skillsInContext = allSkills.filter(s => inContextExpanded.has(s));
+  const skillsListOnly  = allSkills.filter(s => listedExpanded.has(s) && !inContextExpanded.has(s));
+
+  // Use experience section only for date math — prevents education date ranges
+  // (e.g. "Aug 2020 - Jul 2024 BTech") from inflating years of work experience.
+  const dateSourceText = sections.experience || resumeText;
+
+  return {
+    skills: allSkills,
+    skillsInContext,
+    skillsListOnly,
+    yearsExperience: extractYearsExperience(dateSourceText),
+    educationLevel:  extractEducationLevel(resumeText),
+  };
+}
+
+// ─── Score Computation ────────────────────────────────────────────────────────
+
+const EDU_RANK: Record<string, number> = { high_school: 1, bachelors: 2, masters: 3, phd: 4 };
+
+export function computeHybridScore(resume: ParsedResume, jd: ParsedJD): MatchResult {
+  const resumeSet    = new Set(resume.skills);
+  const inContextSet = new Set(resume.skillsInContext);
+
+  // Dynamic weight rebalancing: when a JD has many preferred skills (concrete tools list),
+  // shift 13pts from required to preferred to reflect the JD's actual emphasis.
+  const prefRatio = jd.requiredSkills.length === 0 ? 0
+    : jd.preferredSkills.length / jd.requiredSkills.length;
+  const W_REQ  = prefRatio >= 0.6 ? 32 : 45;
+  const W_PREF = prefRatio >= 0.6 ? 28 : 15;
+
+  // 1. Required skills — weighted by skill importance
+  const matchedRequired = jd.requiredSkills.filter(s => resumeSet.has(s));
+  const missingRequired = jd.requiredSkills.filter(s => !resumeSet.has(s));
+
+  let weightedPossible = 0;
+  let weightedMatched  = 0;
+  for (const s of jd.requiredSkills) {
+    const w = getWeight(s);
+    weightedPossible += w;
+    if (resumeSet.has(s)) weightedMatched += w;
+  }
+
+  const requiredScore = jd.requiredSkills.length === 0
+    ? Math.round(W_REQ * 0.8)
+    : Math.round((weightedMatched / weightedPossible) * W_REQ);
+
+  // 2. Depth of evidence — in-context (bullets) vs listed-only
+  let depthSum = 0;
+  for (const s of matchedRequired) {
+    depthSum += inContextSet.has(s) ? 1.0 : 0.4;
+  }
+  const depthScore = matchedRequired.length === 0
+    ? 0
+    : Math.round((depthSum / matchedRequired.length) * 20);
+
+  // 3. Preferred skills — count-based, dynamic weight
+  const matchedPreferred = jd.preferredSkills.filter(s => resumeSet.has(s));
+  const missingPreferred = jd.preferredSkills.filter(s => !resumeSet.has(s));
+
+  const preferredScore = jd.preferredSkills.length === 0
+    ? Math.round(W_PREF * 0.67)
+    : Math.round((matchedPreferred.length / jd.preferredSkills.length) * W_PREF);
+
+  // 4. Experience — exponential decay on years gap
+  let experienceScore = 10; // neutral when data missing
+  if (jd.yearsRequired !== null && resume.yearsExperience !== null) {
+    const gap = Math.max(0, jd.yearsRequired - resume.yearsExperience);
+    experienceScore = Math.round(12 * Math.exp(-0.6 * gap));
+  } else if (jd.yearsRequired === null) {
+    experienceScore = 12; // no requirement — full credit
+  }
+
+  // 5. Education — rank comparison
+  let educationScore = 5; // neutral when data missing
+  if (jd.educationRequired && resume.educationLevel) {
+    const rr = EDU_RANK[resume.educationLevel]  ?? 0;
+    const jr = EDU_RANK[jd.educationRequired]   ?? 0;
+    if      (rr >= jr + 1) educationScore = 8;  // over-qualified
+    else if (rr === jr)    educationScore = 8;  // exact match
+    else if (rr === jr - 1) educationScore = 4; // one level below
+    else                   educationScore = 0;  // significantly below
+  } else if (!jd.educationRequired) {
+    educationScore = 8;
+  }
+
+  const raw        = requiredScore + depthScore + preferredScore + experienceScore + educationScore;
+  const finalScore = Math.max(0, Math.min(100, Math.round(raw)));
+
+  const label: MatchResult['label'] =
+    finalScore >= 80 ? 'Excellent' :
+    finalScore >= 65 ? 'Strong'    :
+    finalScore >= 50 ? 'Good'      :
+    finalScore >= 35 ? 'Partial'   : 'Weak';
+
+  return {
+    score: finalScore,
+    label,
+    breakdown: { requiredScore, depthScore, preferredScore, experienceScore, educationScore },
     matchedRequired,
     missingRequired,
     matchedPreferred,
     missingPreferred,
+    gatekeepers: jd.gatekeepers,
   };
 }
 
-// ─── Step 4: GPT Explanation ──────────────────────────────────────────────────
+// ─── GPT Explanation ──────────────────────────────────────────────────────────
 
-/**
- * GPT-4o-mini writes the narrative explanation.
- * Critically: the score is already computed and LOCKED. GPT only writes human-friendly text.
- * This prevents GPT from "disagreeing" with the score or hallucinating a different number.
- */
 export async function generateExplanation(
   score: number,
+  label: string,
   breakdown: ScoreBreakdown,
   matchedRequired: string[],
   missingRequired: string[],
@@ -273,13 +444,14 @@ export async function generateExplanation(
 ): Promise<Explanation> {
   const prompt = `You are a career coach reviewing a resume against a job description.
 
-MATCH SCORE: ${score}/100 (FINAL — do not suggest a different number)
+MATCH SCORE: ${score}/100 — ${label} (FINAL — do not suggest a different number)
 
 SCORE BREAKDOWN:
-- Required skills matched: ${breakdown.requiredScore}/50
-- Preferred skills matched: ${breakdown.preferredScore}/30
-- Experience score: ${breakdown.experienceScore}/20
-- Experience penalty: ${breakdown.experiencePenalty}
+- Required skills (weighted): ${breakdown.requiredScore}
+- Depth of evidence: ${breakdown.depthScore}/20
+- Preferred skills: ${breakdown.preferredScore}
+- Experience: ${breakdown.experienceScore}/12
+- Education: ${breakdown.educationScore}/8
 
 MATCHED REQUIRED: ${matchedRequired.slice(0, 10).join(', ') || 'none'}
 MISSING REQUIRED: ${missingRequired.slice(0, 8).join(', ') || 'none'}
@@ -304,7 +476,7 @@ Respond ONLY with valid JSON, no markdown:
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4o-mini',
       max_tokens: 1000,
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }],
@@ -315,9 +487,8 @@ Respond ONLY with valid JSON, no markdown:
     return JSON.parse(clean);
   } catch (err: any) {
     console.error('[matcher] generateExplanation failed:', err.message);
-    // Graceful fallback
     return {
-      summary: `This resume scores ${score}/100 for this role. ${score >= 70 ? 'Strong alignment detected.' : score >= 50 ? 'Partial fit — some gaps exist.' : 'Significant skill gaps detected.'}`,
+      summary: `This resume scores ${score}/100 (${label}) for this role. ${score >= 65 ? 'Strong alignment detected.' : score >= 50 ? 'Partial fit — some gaps exist.' : 'Significant skill gaps detected.'}`,
       bulletPoints: [
         matchedRequired.length > 0 ? `Matched required skills: ${matchedRequired.slice(0, 5).join(', ')}` : 'No required skills matched from the list.',
         missingRequired.length > 0 ? `Missing required skills: ${missingRequired.slice(0, 5).join(', ')}` : 'All required skills accounted for.',
@@ -333,13 +504,6 @@ Respond ONLY with valid JSON, no markdown:
 
 // ─── Convenience: Full Pipeline ───────────────────────────────────────────────
 
-/**
- * Runs the full hybrid pipeline end-to-end.
- * Use this when you don't have pre-parsed JD/resume data cached yet.
- *
- * In production, you'd cache parsedJD on the application row and
- * parsedResume on the resume row — this is the "parse once" version.
- */
 export async function runFullMatch(
   resumeText: string,
   jdText: string,
@@ -354,18 +518,13 @@ export async function runFullMatch(
   matchResult: MatchResult;
   explanation: Explanation;
 }> {
-  // Use cached versions if available (avoids re-parsing)
-  const [parsedJD, parsedResume] = await Promise.all([
-    options?.cachedParsedJD ?? parseJD(jdText, openai),
-    options?.cachedParsedResume ?? parseResume(resumeText, openai),
-  ]);
+  const parsedJD     = options?.cachedParsedJD     ?? parseJD(jdText);
+  const parsedResume = options?.cachedParsedResume ?? parseResume(resumeText);
+  const matchResult  = computeHybridScore(parsedResume, parsedJD);
 
-  // Pure JS — no LLM call
-  const matchResult = computeHybridScore(parsedResume, parsedJD);
-
-  // GPT narrative only
   const explanation = await generateExplanation(
     matchResult.score,
+    matchResult.label,
     matchResult.breakdown,
     matchResult.matchedRequired,
     matchResult.missingRequired,

@@ -34,7 +34,6 @@ import {
   LogOut,
   User,
   UserCircle2,
-  Camera,
   Mail,
   Calendar,
   Shield,
@@ -203,21 +202,6 @@ function calculateConversionRate(apps: any[], fromStatus: string, toStatus: stri
 const getThemeKey = (userId: string) => `jt.theme.v4.${userId}`;
 const getProfileKey = (userId: string) => `jt.profile.v1.${userId}`;
 
-// Provided avatar options (emoji-based, theme-aware)
-const AVATAR_OPTIONS = [
-  { id: "rocket",    emoji: "🚀", label: "Rocket"    },
-  { id: "star",      emoji: "⭐", label: "Star"      },
-  { id: "fire",      emoji: "🔥", label: "Fire"      },
-  { id: "lightning", emoji: "⚡", label: "Lightning" },
-  { id: "diamond",   emoji: "💎", label: "Diamond"   },
-  { id: "crown",     emoji: "👑", label: "Crown"     },
-  { id: "ninja",     emoji: "🥷", label: "Ninja"     },
-  { id: "robot",     emoji: "🤖", label: "Robot"     },
-  { id: "alien",     emoji: "👾", label: "Alien"     },
-  { id: "fox",       emoji: "🦊", label: "Fox"       },
-  { id: "dragon",    emoji: "🐉", label: "Dragon"    },
-  { id: "owl",       emoji: "🦉", label: "Owl"       },
-];
 
 const DEFAULT_THEME = {
   mode: "dark",
@@ -478,6 +462,40 @@ function applyThemeToDom(t: any) {
   document.body.style.fontFamily = t.fontFamily;
 }
 
+/** ---------- Avatar Utilities ---------- */
+function nameToColor(name: string): string {
+  const PALETTE = ['#4f46e5','#0891b2','#059669','#d97706','#dc2626','#7c3aed','#db2777','#0284c7'];
+  if (!name) return PALETTE[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return PALETTE[Math.abs(hash) % PALETTE.length];
+}
+
+function Avatar({ url, name, size }: { url?: string | null; name: string; size: number }) {
+  const [imgFailed, setImgFailed] = React.useState(false);
+  const initial = (name || '?').trim().charAt(0).toUpperCase();
+  const bg = nameToColor(name);
+  const base: React.CSSProperties = { width: size, height: size, borderRadius: '50%', flexShrink: 0 };
+
+  if (url && !imgFailed) {
+    return (
+      <img
+        src={url}
+        alt={name || 'avatar'}
+        style={{ ...base, objectFit: 'cover', display: 'block' }}
+        onError={() => setImgFailed(true)}
+      />
+    );
+  }
+  return (
+    <div style={{ ...base, background: bg, color: '#fff', fontSize: Math.round(size * 0.42), fontWeight: 700, letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {initial}
+    </div>
+  );
+}
+
 /** ---------- Main Component ---------- */
 export default function JobApplicationTracker({ session }: { session: any }) {
 
@@ -487,10 +505,10 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const userId: string = session?.user?.id ?? "";
   const googleName: string = session?.user?.user_metadata?.full_name ?? session?.user?.email ?? "";
   const googleEmail: string = session?.user?.email ?? "";
+  const googleAvatarUrl: string | null = session?.user?.user_metadata?.avatar_url ?? null;
 
   // Profile state
   const [displayName, setDisplayName] = useState<string>("");
-  const [avatarId, setAvatarId] = useState<string>("rocket");
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
   const [showNameModal, setShowNameModal] = useState(false);
   const [nameInput, setNameInput] = useState("");
@@ -540,10 +558,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [resumeUploading, setResumeUploading] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [resumeParseStatus, setResumeParseStatus] = useState<Record<string, "idle"|"parsing"|"done"|"error">>({});
-  const [showMatchPanel, setShowMatchPanel] = useState(false);
   const [matchResumeId, setMatchResumeId] = useState<string>("");
-  const [matchAppId, setMatchAppId] = useState<string>("");
-  const [matchJD, setMatchJD] = useState<string>("");
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchResult, setMatchResult] = useState<any>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
@@ -682,13 +697,12 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     }
   };
 
-  const saveProfileMeta = async (name: string, avatar: string) => {
+  const saveProfileMeta = async (name: string, _avatar: string) => {
     setDisplayName(name);
-    setAvatarId(avatar);
     // persist locally too
     try {
       const cached = JSON.parse(localStorage.getItem(getProfileKey(userId)) || "{}");
-      localStorage.setItem(getProfileKey(userId), JSON.stringify({ ...cached, displayName: name, avatarId: avatar }));
+      localStorage.setItem(getProfileKey(userId), JSON.stringify({ ...cached, displayName: name }));
     } catch {}
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -696,7 +710,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${currentSession.access_token}` },
-        body: JSON.stringify({ display_name: name, avatar_id: avatar }),
+        body: JSON.stringify({ display_name: name, avatar_id: "" }),
       });
     } catch (error) {
       console.error("Error saving profile meta:", error);
@@ -719,7 +733,6 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       try {
         const cachedMeta = JSON.parse(localStorage.getItem(getProfileKey(userId)) || "{}");
         if (cachedMeta.displayName) setDisplayName(cachedMeta.displayName);
-        if (cachedMeta.avatarId) setAvatarId(cachedMeta.avatarId);
       } catch {}
 
       const res = await fetch(`${import.meta.env.VITE_API_URL}/profile`, {
@@ -764,11 +777,6 @@ export default function JobApplicationTracker({ session }: { session: any }) {
           // First login — no name yet, show the name prompt modal
           setNameInput(googleName);
           setShowNameModal(true);
-        }
-
-        // Avatar
-        if (profile.avatar_id) {
-          setAvatarId(profile.avatar_id);
         }
 
         // Joined date from profile created_at
@@ -1229,6 +1237,10 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         });
         const data = await res.json();
         if (data.success) {
+          const newId = data.data.id;
+          await fetchResumes();
+          // Auto-parse immediately after upload
+          await handleResumeParse(newId);
           await fetchResumes();
         } else {
           setResumeError(data.error || "Upload failed.");
@@ -1297,41 +1309,6 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     } catch (err: any) {
       setResumeParseStatus((p) => ({ ...p, [id]: "error" }));
       setResumeError(err?.message || "Parse failed.");
-    }
-  };
-
-  const handleRunMatch = async () => {
-    if (!matchResumeId || !matchAppId || !matchJD.trim()) {
-      setMatchError("Please select a resume, an application, and paste a job description.");
-      return;
-    }
-    setMatchLoading(true);
-    setMatchError(null);
-    setMatchResult(null);
-    try {
-      // Set chosen resume as active first
-      await fetch(`${import.meta.env.VITE_API_URL}/resumes/${matchResumeId}/active`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/match`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ applicationId: matchAppId, jdText: matchJD }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setMatchResult(data.data);
-      } else {
-        setMatchError(data.error || "Match failed.");
-      }
-    } catch (err: any) {
-      setMatchError(err?.message || "Match failed.");
-    } finally {
-      setMatchLoading(false);
     }
   };
 
@@ -1480,7 +1457,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         {/* Header */}
 <div style={{ marginBottom: 32, position: "relative" }}>
   <h1 style={{ fontSize: 42, fontWeight: 900, margin: 0, marginBottom: 8, color: "var(--jt-title)", textShadow: `0 0 calc(50px * var(--jt-title-glow)) var(--jt-title)` }}>
-    {displayName ? `Welcome, ${displayName} 👋` : "Job Application Tracker"}
+    {displayName ? `Welcome, ${displayName}` : "Job Application Tracker"}
   </h1>
   {/* Avatar button — top right corner */}
   <button
@@ -1496,15 +1473,16 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       border: "2px solid var(--jt-accent)",
       background: "var(--jt-panel)",
       cursor: "pointer",
-      fontSize: 24,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       boxShadow: `0 0 16px rgba(${hexToRgb(theme.palettes[theme.mode].accentGlow)}, calc(var(--jt-glow) * 0.5))`,
       transition: "all 0.2s ease",
+      overflow: "hidden",
+      padding: 0,
     }}
   >
-    {AVATAR_OPTIONS.find(a => a.id === avatarId)?.emoji ?? "🚀"}
+    <Avatar url={googleAvatarUrl} name={displayName || googleName} size={44} />
   </button>
  {/* AI Summary */}
 {apps.length > 0 && (
@@ -1898,23 +1876,16 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
                           {/* Actions */}
                           <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
-                            {/* Parsed badge */}
-                            {resume.extracted_text && (
-                              <span style={{
-                                fontSize: 11, fontWeight: 700, padding: "3px 8px",
-                                borderRadius: 999, background: "rgba(16,185,129,0.15)",
-                                border: "1px solid rgba(16,185,129,0.4)", color: "#10b981",
-                              }}>✓ Parsed</span>
-                            )}
-                            {/* Parse button */}
-                            <button
-                              onClick={() => handleResumeParse(resume.id)}
-                              disabled={resumeParseStatus[resume.id] === "parsing"}
-                              title={resume.extracted_text ? "Re-parse" : "Parse for matching"}
-                              style={{ ...S.button("secondary"), padding: "8px 14px", fontSize: 13 }}
-                            >
-                              {resumeParseStatus[resume.id] === "parsing" ? "Parsing…" : resume.extracted_text ? "Re-parse" : "Parse"}
-                            </button>
+                            {/* Parse status */}
+                            {resumeParseStatus[resume.id] === "parsing" ? (
+                              <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.35)", color: "var(--jt-accent)" }}>
+                                Parsing…
+                              </span>
+                            ) : resume.extracted_text ? (
+                              <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.4)", color: "#10b981" }}>
+                                Parsed
+                              </span>
+                            ) : null}
                             <button
                               onClick={() => handleResumeDownload(resume.id)}
                               title="Download"
@@ -1985,153 +1956,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
               </div>
             </div>
 
-            {/* ── Resume Match ── */}
-            <div style={S.card}>
-              <div style={{ padding: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-                    🎯 Resume Match
-                  </div>
-                  <button
-                    onClick={() => { setShowMatchPanel(!showMatchPanel); setMatchResult(null); setMatchError(null); }}
-                    style={{ ...S.button("secondary"), padding: "8px 16px", fontSize: 13 }}
-                  >
-                    {showMatchPanel ? "Hide" : "Match Resume to Job"}
-                  </button>
-                </div>
-                <div style={{ color: "var(--jt-muted)", fontSize: 13 }}>
-                  Score how well a parsed resume fits a specific job description.
-                </div>
 
-                {showMatchPanel && (
-                  <div style={{ marginTop: 24, display: "grid", gap: 16 }}>
-                    {matchError && (
-                      <div style={{ padding: "12px 16px", borderRadius: "var(--jt-radius)", background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.4)", color: "#f87171", fontSize: 14 }}>
-                        {matchError}
-                      </div>
-                    )}
-
-                    {/* Resume selector */}
-                    <div>
-                      <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 6 }}>Select Resume</label>
-                      <select
-                        value={matchResumeId}
-                        onChange={(e) => setMatchResumeId(e.target.value)}
-                        style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--jt-radius)", border: "1px solid var(--jt-border)", background: "var(--jt-panel)", color: "var(--jt-text)", fontSize: 14 }}
-                      >
-                        <option value="">— choose a parsed resume —</option>
-                        {resumes.filter((r) => r.extracted_text).map((r) => (
-                          <option key={r.id} value={r.id}>{r.file_name}</option>
-                        ))}
-                      </select>
-                      {resumes.filter((r) => r.extracted_text).length === 0 && (
-                        <div style={{ fontSize: 12, color: "var(--jt-muted)", marginTop: 4 }}>No parsed resumes yet — hit Parse on a resume above first.</div>
-                      )}
-                    </div>
-
-                    {/* Application selector */}
-                    <div>
-                      <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 6 }}>Select Application</label>
-                      <select
-                        value={matchAppId}
-                        onChange={(e) => setMatchAppId(e.target.value)}
-                        style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--jt-radius)", border: "1px solid var(--jt-border)", background: "var(--jt-panel)", color: "var(--jt-text)", fontSize: 14 }}
-                      >
-                        <option value="">— choose an application —</option>
-                        {apps.map((app: any) => (
-                          <option key={app.id} value={app.id}>{app.company} — {app.position}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* JD textarea */}
-                    <div>
-                      <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 6 }}>Paste Job Description</label>
-                      <textarea
-                        value={matchJD}
-                        onChange={(e) => setMatchJD(e.target.value)}
-                        placeholder="Paste the full job description here…"
-                        rows={8}
-                        style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--jt-radius)", border: "1px solid var(--jt-border)", background: "var(--jt-panel)", color: "var(--jt-text)", fontSize: 14, resize: "vertical", boxSizing: "border-box" }}
-                      />
-                    </div>
-
-                    <button
-                      onClick={handleRunMatch}
-                      disabled={matchLoading}
-                      style={{ ...S.button("primary"), padding: "12px 24px", fontSize: 15, width: "fit-content" }}
-                    >
-                      {matchLoading ? "Analyzing…" : "Run Match"}
-                    </button>
-
-                    {/* Results */}
-                    {matchResult && (
-                      <div style={{ marginTop: 8, display: "grid", gap: 16 }}>
-                        {/* Score card */}
-                        <div style={{ ...S.panel, padding: 24, display: "flex", alignItems: "center", gap: 24 }}>
-                          <div style={{ textAlign: "center", flexShrink: 0 }}>
-                            <div style={{ fontSize: 52, fontWeight: 900, color: matchResult.score >= 70 ? "#10b981" : matchResult.score >= 45 ? "#f59e0b" : "#f87171", lineHeight: 1 }}>
-                              {matchResult.score}
-                            </div>
-                            <div style={{ fontSize: 13, color: "var(--jt-muted)", marginTop: 4 }}>/ 100</div>
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
-                              {matchResult.score >= 70 ? "Strong Match 🟢" : matchResult.score >= 45 ? "Moderate Match 🟡" : "Weak Match 🔴"}
-                            </div>
-                            {matchResult.gpt_summary && (
-                              <div style={{ fontSize: 14, color: "var(--jt-muted)", lineHeight: 1.5 }}>{matchResult.gpt_summary}</div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Breakdown */}
-                        {matchResult.breakdown && (
-                          <div style={{ ...S.panel, padding: 20 }}>
-                            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Score Breakdown</div>
-                            {Object.entries(matchResult.breakdown).map(([key, val]: any) => (
-                              <div key={key} style={{ marginBottom: 10 }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
-                                  <span style={{ textTransform: "capitalize" }}>{key.replace(/_/g, " ")}</span>
-                                  <span style={{ fontWeight: 700 }}>{val}</span>
-                                </div>
-                                <div style={{ height: 6, borderRadius: 3, background: "var(--jt-border)", overflow: "hidden" }}>
-                                  <div style={{ height: "100%", width: `${Math.min(100, (val / (key === "skills" ? 35 : key === "stack" ? 25 : key === "title" ? 20 : 10)) * 100)}%`, background: "var(--jt-accent)", borderRadius: 3, transition: "width 0.5s ease" }} />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Matched / Missing skills */}
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                          {matchResult.matched_skills?.length > 0 && (
-                            <div style={{ ...S.panel, padding: 16 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#10b981" }}>✓ Matched Skills</div>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                                {matchResult.matched_skills.map((s: string) => (
-                                  <span key={s} style={{ fontSize: 12, padding: "3px 8px", borderRadius: 999, background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", color: "#10b981" }}>{s}</span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {matchResult.missing_skills?.length > 0 && (
-                            <div style={{ ...S.panel, padding: 16 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#f87171" }}>✗ Missing Skills</div>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                                {matchResult.missing_skills.map((s: string) => (
-                                  <span key={s} style={{ fontSize: 12, padding: "3px 8px", borderRadius: 999, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>{s}</span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
 
             {/* Application Documents (existing) */}
             {Object.keys(filesByCompany).length > 0 && (
@@ -2357,7 +2182,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         {activeTab === "profile" && (
           <ProfileTab
             displayName={displayName}
-            avatarId={avatarId}
+            googleAvatarUrl={googleAvatarUrl}
             googleEmail={googleEmail}
             joinedAt={joinedAt}
             appsCount={apps.length}
@@ -2382,7 +2207,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         {showNameModal && (
           <div className="jt-modal" style={{ zIndex: 2000 }}>
             <div className="jt-card" style={{ width: "min(480px, 100%)", padding: 40, textAlign: "center" }}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>👋</div>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+                <Avatar url={googleAvatarUrl} name={nameInput || googleName} size={64} />
+              </div>
               <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Welcome aboard!</div>
               <div style={{ color: "var(--jt-muted)", fontSize: 15, marginBottom: 28 }}>
                 Let's set up your profile. What should we call you?
@@ -2394,42 +2221,23 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                 onChange={e => setNameInput(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === "Enter" && nameInput.trim()) {
-                    saveProfileMeta(nameInput.trim(), avatarId);
+                    saveProfileMeta(nameInput.trim(), "");
                     setShowNameModal(false);
                   }
                 }}
                 style={{ ...S.input, fontSize: 16, textAlign: "center", marginBottom: 24 }}
               />
-              <div style={{ fontSize: 14, color: "var(--jt-muted)", marginBottom: 16 }}>Pick an avatar</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 28 }}>
-                {AVATAR_OPTIONS.map(av => (
-                  <button
-                    key={av.id}
-                    title={av.label}
-                    onClick={() => setAvatarId(av.id)}
-                    style={{
-                      width: "100%", aspectRatio: "1", borderRadius: "50%",
-                      border: avatarId === av.id ? "2px solid var(--jt-accent)" : "2px solid var(--jt-border)",
-                      background: avatarId === av.id ? `rgba(${hexToRgb(theme.palettes[theme.mode].accentGlow)}, 0.15)` : "var(--jt-panel)",
-                      fontSize: 24, cursor: "pointer", transition: "all 0.2s ease",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}
-                  >
-                    {av.emoji}
-                  </button>
-                ))}
-              </div>
               <button
                 disabled={!nameInput.trim()}
                 onClick={() => {
                   if (nameInput.trim()) {
-                    saveProfileMeta(nameInput.trim(), avatarId);
+                    saveProfileMeta(nameInput.trim(), "");
                     setShowNameModal(false);
                   }
                 }}
                 style={{ ...S.button("primary"), width: "100%", justifyContent: "center", padding: "14px 0", fontSize: 16, opacity: nameInput.trim() ? 1 : 0.5 }}
               >
-                Let's go! 🚀
+                Get Started
               </button>
             </div>
           </div>
@@ -2577,7 +2385,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
           const runMatch = async () => {
             const resumeId = selectedResume?.id;
-            if (!resumeId) { setMatchError("No parsed resume found. Go to Files → Parse a resume first."); return; }
+            if (!resumeId) { setMatchError("No parsed resume found. Upload a resume in the Files tab first."); return; }
             setMatchLoading(true);
             setMatchError(null);
             setMatchResult(null);
@@ -2623,7 +2431,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                   {/* Resume selector */}
                   {parsedResumes.length === 0 ? (
                     <div style={{ padding: "14px 18px", borderRadius: "var(--jt-radius)", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", color: "#f59e0b", fontSize: 14 }}>
-                      ⚠ No parsed resumes found. Go to <strong>Files</strong> and click <strong>Parse</strong> on a resume first.
+                      No parsed resumes found. Upload a resume in the <strong>Files</strong> tab first.
                     </div>
                   ) : (
                     <div>
@@ -3105,15 +2913,13 @@ const ColorInput = ({ label, value, onChange }) => (
   </div>
 );
 /** ---------- Profile Tab Component ---------- */
-function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, onSaveProfileMeta, onLogout, onExportCsv, onDeleteProfile, S, theme }: any) {
+function ProfileTab({ displayName, googleAvatarUrl, googleEmail, joinedAt, appsCount, onSaveProfileMeta, onLogout, onExportCsv, onDeleteProfile, S, theme }: any) {
   const [editingName, setEditingName] = useState(false);
   const [localName, setLocalName] = useState(displayName);
-  const [localAvatar, setLocalAvatar] = useState(avatarId);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Sync local state when parent updates
   useEffect(() => { setLocalName(displayName); }, [displayName]);
-  useEffect(() => { setLocalAvatar(avatarId); }, [avatarId]);
 
   const memberDays = joinedAt
     ? Math.floor((Date.now() - new Date(joinedAt).getTime()) / (1000 * 60 * 60 * 24))
@@ -3133,12 +2939,10 @@ function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, o
             <div style={{
               width: 80, height: 80, borderRadius: "50%",
               border: "3px solid var(--jt-accent)",
-              background: "var(--jt-panel)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 42, flexShrink: 0,
+              flexShrink: 0, overflow: "hidden",
               boxShadow: `0 0 24px rgba(${glowColor}, calc(var(--jt-glow) * 0.6))`,
             }}>
-              {AVATAR_OPTIONS.find(a => a.id === localAvatar)?.emoji ?? "🚀"}
+              <Avatar url={googleAvatarUrl} name={localName || displayName} size={74} />
             </div>
             <div style={{ flex: 1 }}>
               {editingName ? (
@@ -3147,7 +2951,7 @@ function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, o
                   value={localName}
                   onChange={e => setLocalName(e.target.value)}
                   style={{ ...S.input, fontSize: 22, fontWeight: 700, marginBottom: 8 }}
-                  onKeyDown={e => { if (e.key === "Enter") { onSaveProfileMeta(localName, localAvatar); setEditingName(false); } }}
+                  onKeyDown={e => { if (e.key === "Enter") { onSaveProfileMeta(localName, ""); setEditingName(false); } }}
                 />
               ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
@@ -3163,7 +2967,7 @@ function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, o
             </div>
             {editingName && (
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => { onSaveProfileMeta(localName, localAvatar); setEditingName(false); }} style={S.button("primary")}>
+                <button onClick={() => { onSaveProfileMeta(localName, ""); setEditingName(false); }} style={S.button("primary")}>
                   <Save size={15} /> Save
                 </button>
                 <button onClick={() => setEditingName(false)} style={S.button("secondary")}>
@@ -3185,34 +2989,6 @@ function ProfileTab({ displayName, avatarId, googleEmail, joinedAt, appsCount, o
                 <div style={{ fontSize: 20, fontWeight: 800 }}>{value}</div>
                 <div style={{ color: "var(--jt-muted)", fontSize: 12, marginTop: 2 }}>{label}</div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Avatar Picker */}
-      <div style={S.card}>
-        <div style={{ padding: 24 }}>
-          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
-            <Camera size={20} /> Choose Your Avatar
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
-            {AVATAR_OPTIONS.map(av => (
-              <button
-                key={av.id}
-                title={av.label}
-                onClick={() => { setLocalAvatar(av.id); onSaveProfileMeta(displayName, av.id); }}
-                style={{
-                  width: "100%", aspectRatio: "1", borderRadius: "50%",
-                  border: localAvatar === av.id ? "2px solid var(--jt-accent)" : "2px solid var(--jt-border)",
-                  background: localAvatar === av.id ? `rgba(${glowColor}, 0.15)` : "var(--jt-panel)",
-                  fontSize: 28, cursor: "pointer", transition: "all 0.2s ease",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: localAvatar === av.id ? `0 0 16px rgba(${glowColor}, 0.4)` : "none",
-                }}
-              >
-                {av.emoji}
-              </button>
             ))}
           </div>
         </div>
