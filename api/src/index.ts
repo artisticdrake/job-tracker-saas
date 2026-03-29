@@ -618,46 +618,55 @@ app.delete('/match/:appId', requireAuth, async (req, res) => {
 
 // ─── Autofill ────────────────────────────────────────────────────────────────
 // POST /autofill
-// Body: { url: string }
+// Body: { url: string, pageText?: string }
+//   pageText: pre-extracted page text from the browser (used by extension to bypass
+//             server-side fetch limitations on auth-gated sites like LinkedIn)
 // Returns: { company, position, location, salary, jobDescription, source }
 // Used by: Add Application form + Chrome extension
 app.post('/autofill', requireAuth, async (req, res) => {
-  const { url } = req.body;
+  const { url, pageText: rawPageText } = req.body;
 
   if (!url || !url.startsWith('http')) {
     return res.status(400).json({ success: false, error: 'A valid URL is required.' });
   }
 
-  // 1. Fetch the page
-  let rawHtml = '';
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    rawHtml = await response.text();
-  } catch (err: any) {
-    return res.status(422).json({ success: false, error: `Could not fetch the URL: ${err.message}` });
-  }
+  let pageText = '';
 
-  // 2. Strip HTML to readable text
-  const pageText = rawHtml
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/\s{3,}/g, '\n\n')
-    .trim()
-    .slice(0, 12000); // keep within GPT context
+  if (rawPageText && typeof rawPageText === 'string' && rawPageText.trim().length > 100) {
+    // Extension sent pre-extracted browser text — use it directly (already JS-rendered, authenticated)
+    pageText = rawPageText.replace(/\s{3,}/g, '\n').trim().slice(0, 15000);
+  } else {
+    // 1. Fetch the page server-side (fallback for web app manual autofill)
+    let rawHtml = '';
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      rawHtml = await response.text();
+    } catch (err: any) {
+      return res.status(422).json({ success: false, error: `Could not fetch the URL: ${err.message}` });
+    }
+
+    // 2. Strip HTML to readable text
+    pageText = rawHtml
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/\s{3,}/g, '\n\n')
+      .trim()
+      .slice(0, 12000);
+  }
 
   // 3. GPT-4o extraction
   const prompt = `You are a job posting parser. Extract structured data from the page text below.

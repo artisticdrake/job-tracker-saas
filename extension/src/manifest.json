@@ -1,16 +1,41 @@
 {
   "manifest_version": 3,
-  "name": "JobTracker Linker",
-  "version": "1.1",
-  "permissions": ["activeTab"],
-  "host_permissions": ["http://localhost:3001/*"],
+  "name": "Job Tracker",
+  "version": "2.0",
+  "description": "Auto-detect job postings and save them to your Job Tracker",
+  "permissions": ["activeTab", "storage", "identity", "tabs", "scripting"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://mkbhzvjllgnponlzwfok.supabase.co/*",
+    "*://www.linkedin.com/*",
+    "*://www.indeed.com/*",
+    "*://www.glassdoor.com/*",
+    "*://*.greenhouse.io/*",
+    "*://*.lever.co/*",
+    "*://*.workday.com/*",
+    "*://*.myworkdayjobs.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
-      "matches": ["*://www.linkedin.com/jobs/view/*"],
-      "js": ["content.js"]
+      "matches": [
+        "*://www.linkedin.com/jobs/view/*",
+        "*://www.indeed.com/viewjob*",
+        "*://www.glassdoor.com/job-listing/*",
+        "*://*.greenhouse.io/jobs/*",
+        "*://*.lever.co/*/jobs/*",
+        "*://*.lever.co/*/apply/*",
+        "*://*.workday.com/*/job/*",
+        "*://*.myworkdayjobs.com/*/job/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_title": "Job Tracker"
   }
 }

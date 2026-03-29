@@ -1,37 +1,304 @@
-<div style="width: 300px; padding: 15px; font-family: sans-serif; background: #0f1730; color: white;">
-  <h3 style="margin-top: 0; color: #6366f1;">New Job Detected</h3>
-  
-  <div style="margin-bottom: 10px;">
-    <label style="font-size: 11px; color: #94a3b8;">Job URL</label>
-    <input id="jobUrl" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Job Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 360px;
+      background: #0a0f1e;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+    }
+
+    /* ── Header ── */
+    .header {
+      padding: 13px 16px;
+      background: #121d3a;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .header-dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1; flex-shrink: 0; }
+    .header-title { font-size: 14px; font-weight: 700; color: #f8fafc; flex: 1; }
+    .header-user { font-size: 11px; color: #64748b; cursor: pointer; }
+    .header-user:hover { color: #f87171; }
+
+    /* ── Screens ── */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* ── Extracting / Loading ── */
+    .loading-body {
+      padding: 32px 20px;
+      text-align: center;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner-lg {
+      width: 36px; height: 36px;
+      border: 3px solid #1e293b;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 14px;
+    }
+    .loading-label { font-size: 13px; color: #64748b; }
+
+    /* ── Job form ── */
+    .form-body { padding: 14px 16px 0; }
+    .field { margin-bottom: 11px; }
+    .field-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .field input, .field textarea {
+      width: 100%;
+      padding: 8px 10px;
+      background: #0d1528;
+      border: 1px solid #334155;
+      border-radius: 7px;
+      color: #f8fafc;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      resize: none;
+    }
+    .field input:focus, .field textarea:focus {
+      border-color: #6366f1;
+    }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* ── Action bar ── */
+    .action-bar {
+      display: flex;
+      gap: 10px;
+      padding: 12px 16px 16px;
+      border-top: 1px solid #1e293b;
+      margin-top: 12px;
+    }
+    .btn {
+      flex: 1;
+      padding: 11px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+    }
+    .btn-accept { background: #6366f1; color: #fff; }
+    .btn-accept:hover { background: #4f46e5; }
+    .btn-accept:disabled { background: #334155; cursor: not-allowed; }
+    .btn-reject { background: transparent; border: 1px solid #334155; color: #94a3b8; }
+    .btn-reject:hover { border-color: #475569; color: #f8fafc; }
+    .btn-spinner {
+      width: 13px; height: 13px;
+      border: 2px solid #ffffff30;
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    /* ── Not a job page ── */
+    .empty-body {
+      padding: 36px 20px;
+      text-align: center;
+    }
+    .empty-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+      opacity: 0.3;
+    }
+    .empty-title { font-size: 14px; font-weight: 700; color: #64748b; margin-bottom: 6px; }
+    .empty-sub { font-size: 12px; color: #475569; line-height: 1.5; }
+
+    /* ── Success ── */
+    .success-body {
+      padding: 36px 20px;
+      text-align: center;
+    }
+    .success-check { font-size: 40px; color: #10b981; margin-bottom: 10px; }
+    .success-title { font-size: 15px; font-weight: 700; color: #10b981; margin-bottom: 5px; }
+    .success-sub { font-size: 12px; color: #64748b; }
+
+    /* ── Sign in ── */
+    .signin-body { padding: 28px 20px 24px; text-align: center; }
+    .signin-icon {
+      width: 50px; height: 50px;
+      border-radius: 13px;
+      background: rgba(99,102,241,0.12);
+      border: 1px solid rgba(99,102,241,0.25);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 16px;
+    }
+    .signin-heading { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+    .signin-sub { font-size: 12px; color: #64748b; line-height: 1.5; margin-bottom: 20px; }
+    .btn-google {
+      width: 100%;
+      padding: 11px;
+      background: #6366f1;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-google:hover { background: #4f46e5; }
+    .btn-google:disabled { background: #334155; cursor: not-allowed; }
+    .signin-error { margin-top: 10px; font-size: 11px; color: #f87171; display: none; }
+
+    /* ── Error ── */
+    .error-body { padding: 28px 20px; text-align: center; }
+    .error-icon { font-size: 30px; color: #f87171; margin-bottom: 10px; }
+    .error-msg { font-size: 12px; color: #94a3b8; line-height: 1.5; margin-bottom: 14px; }
+    .btn-retry {
+      padding: 8px 18px;
+      background: transparent;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #94a3b8;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn-retry:hover { border-color: #6366f1; color: #f8fafc; }
+  </style>
+</head>
+<body>
+
+  <!-- Header (shown on all screens except sign-in) -->
+  <div class="header" id="header" style="display:none">
+    <div class="header-dot"></div>
+    <span class="header-title">Job Tracker</span>
+    <span class="header-user" id="header-signout" title="Sign out">Sign out</span>
   </div>
 
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-    <div>
-      <label style="font-size: 11px; color: #94a3b8;">Company</label>
-      <input id="company" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+  <!-- Screen: Sign in -->
+  <div class="screen active" id="screen-signin">
+    <div class="header">
+      <div class="header-dot"></div>
+      <span class="header-title">Job Tracker</span>
     </div>
-    <div>
-      <label style="font-size: 11px; color: #94a3b8;">Position</label>
-      <input id="position" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+    <div class="signin-body">
+      <div class="signin-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="7" width="20" height="14" rx="2"/>
+          <path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
+        </svg>
+      </div>
+      <div class="signin-heading">Sign in to get started</div>
+      <div class="signin-sub">Sign in once to auto-save jobs from any job board directly to your tracker.</div>
+      <button class="btn-google" id="btn-signin">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+        Sign in with Google
+      </button>
+      <div class="signin-error" id="signin-error"></div>
     </div>
   </div>
 
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-    <div>
-      <label style="font-size: 11px; color: #94a3b8;">Location</label>
-      <input id="location" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
-    </div>
-    <div>
-      <label style="font-size: 11px; color: #94a3b8;">Salary</label>
-      <input id="salary" type="text" style="width: 100%; background: #121d3a; border: 1px solid #334155; color: white; border-radius: 4px;">
+  <!-- Screen: Extracting (loading) -->
+  <div class="screen" id="screen-loading">
+    <div class="loading-body">
+      <div class="spinner-lg"></div>
+      <div class="loading-label">Extracting job details…</div>
     </div>
   </div>
 
-  <div style="display: flex; gap: 10px;">
-    <button id="acceptBtn" style="flex: 1; padding: 8px; background: #6366f1; border: none; color: white; border-radius: 4px; cursor: pointer;">Accept</button>
-    <button id="rejectBtn" style="flex: 1; padding: 8px; background: #334155; border: none; color: white; border-radius: 4px; cursor: pointer;">Reject</button>
+  <!-- Screen: Job form (review + accept/reject) -->
+  <div class="screen" id="screen-form">
+    <div class="form-body">
+      <div class="row-2">
+        <div class="field">
+          <div class="field-label">Company</div>
+          <input id="f-company" type="text" placeholder="Company">
+        </div>
+        <div class="field">
+          <div class="field-label">Position</div>
+          <input id="f-position" type="text" placeholder="Position">
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <div class="field-label">Location</div>
+          <input id="f-location" type="text" placeholder="Location">
+        </div>
+        <div class="field">
+          <div class="field-label">Salary</div>
+          <input id="f-salary" type="text" placeholder="Not listed">
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">Source</div>
+        <input id="f-source" type="text" readonly style="color:#818cf8;cursor:default;">
+      </div>
+      <div class="field">
+        <div class="field-label" style="display:flex;align-items:center;justify-content:space-between;">
+          Job Description
+          <span id="jd-char-count" style="font-size:10px;color:#475569;font-weight:400;text-transform:none;letter-spacing:0;"></span>
+        </div>
+        <textarea id="f-jd" rows="4" placeholder="No job description extracted — paste it here if needed" style="font-size:11px;line-height:1.5;"></textarea>
+      </div>
+    </div>
+    <!-- Duplicate warning (hidden until a duplicate is found) -->
+    <div id="dup-warning" style="display:none; margin: 0 0 0 0; padding: 11px 14px; background: rgba(245,158,11,0.1); border-top: 1px solid rgba(245,158,11,0.3);">
+      <div style="display:flex; gap:9px; align-items:flex-start;">
+        <div style="color:#f59e0b; font-size:15px; flex-shrink:0; line-height:1.2;">!</div>
+        <div>
+          <div style="font-size:12px; font-weight:700; color:#f59e0b; margin-bottom:3px;">Possible duplicate</div>
+          <div id="dup-warning-detail" style="font-size:11px; color:#94a3b8; line-height:1.4;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn btn-reject" id="btn-reject">Reject</button>
+      <button class="btn btn-accept" id="btn-accept">Accept</button>
+    </div>
   </div>
-  <p id="status" style="font-size: 10px; text-align: center; margin-top: 10px;"></p>
-</div>
-<script src="popup.js"></script>
+
+  <!-- Screen: Not a job page -->
+  <div class="screen" id="screen-notjob">
+    <div class="empty-body">
+      <div class="empty-icon">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#334155" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+      </div>
+      <div class="empty-title">No job page detected</div>
+      <div class="empty-sub" style="margin-bottom:18px;">Navigate to a job posting on LinkedIn, Indeed, Glassdoor, or another job board, then open this extension.</div>
+      <button id="btn-check-anyway" class="btn-google" style="width:auto;padding:9px 20px;font-size:12px;background:transparent;border:1px solid #334155;color:#94a3b8;">
+        Try This Page Anyway
+      </button>
+    </div>
+  </div>
+
+  <!-- Screen: Extraction error -->
+  <div class="screen" id="screen-error">
+    <div class="error-body">
+      <div class="error-icon">!</div>
+      <div class="error-msg" id="error-msg">Something went wrong.</div>
+      <button class="btn-retry" id="btn-retry">Try Again</button>
+    </div>
+  </div>
+
+  <!-- Screen: Saved successfully -->
+  <div class="screen" id="screen-success">
+    <div class="success-body">
+      <div class="success-check">✓</div>
+      <div class="success-title">Added to your tracker!</div>
+      <div class="success-sub" id="success-detail"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -523,6 +523,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [dupWarning, setDupWarning] = useState<any>(null);
+  const dupConfirmedRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const [expandedApp, setExpandedApp] = useState(null);
   // AI summary state
 
@@ -929,16 +932,17 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const dup = apps.find(
-      (a: any) =>
-        a.id !== editId &&
-        normalizeCompanyKey(a.company) === normalizeCompanyKey(formData.company) &&
-        a.position?.toLowerCase() === formData.position?.toLowerCase()
-    );
-    if (dup) {
-      alert(`Duplicate found: ${dup.company} - ${dup.position}`);
-      return;
+    if (!editId && !dupConfirmedRef.current) {
+      const dup = apps.find((a: any) => {
+        if (a.id === editId) return false;
+        if (formData.jobUrl && a.job_url && a.job_url === formData.jobUrl) return true;
+        return normalizeCompanyKey(a.company) === normalizeCompanyKey(formData.company) &&
+          a.position?.toLowerCase() === formData.position?.toLowerCase();
+      });
+      if (dup) { setDupWarning(dup); return; }
     }
+    dupConfirmedRef.current = false;
+    setDupWarning(null);
 
     if (!session?.access_token) {
       alert("You are not signed in.");
@@ -1036,6 +1040,8 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     });
     setShowForm(false);
     setEditId(null);
+    setDupWarning(null);
+    dupConfirmedRef.current = false;
   };
 
   const handleEdit = (app: any) => {
@@ -2648,7 +2654,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         {showForm && (
           <div className="jt-modal">
             <div className="jt-card" style={{ width: "min(700px, 100%)", maxHeight: "90vh", overflow: "auto", overflowX: "hidden" }}>
-              <form onSubmit={handleSubmit}>
+              <form ref={formRef} onSubmit={handleSubmit}>
                 <div style={{ padding: 24, borderBottom: "1px solid var(--jt-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ fontSize: 24, fontWeight: 700 }}>{editId ? "Edit Application" : "New Application"}</div>
                   <button type="button" onClick={resetForm} style={S.button("secondary")}>
@@ -2867,6 +2873,28 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                     />
                   </div>
                 </div>
+
+                {dupWarning && (
+                  <div style={{ margin: "0 24px", padding: "12px 16px", borderRadius: "var(--jt-radius)", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.35)", display: "flex", alignItems: "flex-start", gap: 12 }}>
+                    <div style={{ fontSize: 16, color: "#f59e0b", flexShrink: 0, marginTop: 1 }}>!</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b", marginBottom: 3 }}>Possible duplicate</div>
+                      <div style={{ fontSize: 12, color: "var(--jt-muted)", marginBottom: 10 }}>
+                        <strong style={{ color: "var(--jt-text)" }}>{dupWarning.company} — {dupWarning.position}</strong> is already in your tracker. Add it anyway?
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button type="button" onClick={() => { dupConfirmedRef.current = true; formRef.current?.requestSubmit(); }}
+                          style={{ padding: "6px 14px", background: "#f59e0b", border: "none", borderRadius: "var(--jt-radius)", color: "#000", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                          Add Anyway
+                        </button>
+                        <button type="button" onClick={() => setDupWarning(null)}
+                          style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--jt-border)", borderRadius: "var(--jt-radius)", color: "var(--jt-muted)", fontSize: 12, cursor: "pointer" }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div style={{ padding: 24, borderTop: "1px solid var(--jt-border)", display: "flex", gap: 12, justifyContent: "flex-end" }}>
                   <button type="button" onClick={resetForm} style={S.button("secondary")}>
