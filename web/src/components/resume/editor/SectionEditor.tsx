@@ -18,6 +18,9 @@ function newItem(type: SectionType): ResumeSectionItem {
   if (type === 'skills') {
     return { id, category: '', items: '' };
   }
+  if (type === 'awards') {
+    return { id, text: '' };
+  }
   return { id, content: '' };
 }
 
@@ -76,6 +79,28 @@ export default function SectionEditor({ section, onChange }: Props) {
             />
           );
         }
+        if (section.type === 'awards') {
+          // One validated win per item, stored in `item.text` (NOT `content`).
+          return (
+            <div key={item.id} className="flex items-start gap-2 group">
+              <textarea
+                className="flex-1 text-sm bg-background border border-border rounded px-2 py-1.5 resize-none outline-none focus:ring-1 focus:ring-primary/50 min-h-[3rem]"
+                value={item.text ?? ''}
+                placeholder="Award title, placement/amount, issuer. Use **bold**, *italic*, and [text](url) for links"
+                aria-label={`Award ${idx + 1}`}
+                onChange={(e) => updateItem(idx, { ...item, text: e.target.value })}
+              />
+              <button
+                type="button"
+                onClick={() => deleteItem(idx)}
+                className="mt-1 shrink-0 opacity-0 group-hover:opacity-100 h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all text-xs"
+                aria-label="Delete award"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        }
         // custom
         return (
           <div key={item.id} className="flex items-start gap-2 group">
@@ -103,7 +128,7 @@ export default function SectionEditor({ section, onChange }: Props) {
         onClick={addItem}
         className="w-full text-xs text-primary border border-dashed border-primary/30 hover:border-primary/60 rounded-md py-1.5 transition-colors hover:bg-primary/5"
       >
-        + Add {section.type === 'skills' ? 'skill category' : section.type === 'projects' ? 'project' : 'entry'}
+        + Add {section.type === 'skills' ? 'skill category' : section.type === 'projects' ? 'project' : section.type === 'awards' ? 'award' : 'entry'}
       </button>
     </div>
   );
