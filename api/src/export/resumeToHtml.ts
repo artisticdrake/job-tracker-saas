@@ -34,6 +34,7 @@ interface ResumeSectionItem {
   projectName?: string; techStack?: string; dateRange?: string;
   category?: string; items?: string;
   content?: string;
+  text?: string;
 }
 interface ResumeSection { id: string; type: string; title: string; visible: boolean; items: ResumeSectionItem[]; }
 interface ResumeHeader { name: string; title: string; phone: string; email: string; linkedin: string; github: string; portfolio: string; }
@@ -217,6 +218,26 @@ function renderSkillsItem(item: ResumeSectionItem, fs: number, ls: number): stri
     </div>`;
 }
 
+/**
+ * Awards & Recognition: each item holds one validated win in `item.text`.
+ * Rendered as a disc list, identical styling to experience/project bullets so
+ * the section reads consistently with the rest of the resume.
+ */
+function renderAwards(items: ResumeSectionItem[], fs: number, ls: number): string {
+  const lis = items
+    .filter(item => item.text?.trim())
+    .map(item => {
+      const clean = normalizeBulletText(item.text);
+      return `<li style="font-size:${fs}pt;margin-bottom:${fs * 0.1}pt;padding-left:2pt">${md(clean)}</li>`;
+    })
+    .join('\n');
+  if (!lis) return '';
+  return `
+    <ul style="list-style-type:disc;list-style-position:outside;margin:${fs * 0.15}pt 0 0 0;padding-left:${fs * 1.2}pt;line-height:${ls}">
+      ${lis}
+    </ul>`;
+}
+
 function renderSection(section: ResumeSection, fs: number, ls: number, sectionSpacing: number): string {
   if (!section.visible) return '';
 
@@ -236,6 +257,8 @@ function renderSection(section: ResumeSection, fs: number, ls: number, sectionSp
   } else if (section.type === 'skills') {
     // Skills render as "Category: item1, item2" lines — no bullets
     body = `<div style="line-height:${ls}">${section.items.map(item => renderSkillsItem(item, fs, ls)).join('\n')}</div>`;
+  } else if (section.type === 'awards') {
+    body = renderAwards(section.items, fs, ls);
   } else if (section.type === 'custom') {
     body = section.items.map(item =>
       `<div style="font-size:${fs}pt;line-height:${ls}">${md(item.content)}</div>`
@@ -304,6 +327,8 @@ export function resumeContentToText(content: ResumeContent): string {
         const row = [head, item.dateRange ? plain(item.dateRange) : ''].filter(Boolean).join('  ');
         if (row) lines.push(row);
         for (const b of item.bullets ?? []) { const t = plain(b.text); if (t) lines.push(`- ${t}`); }
+      } else if (section.type === 'awards') {
+        const t = plain(item.text); if (t) lines.push(`- ${t}`);
       } else if (section.type === 'custom') {
         const t = plain(item.content); if (t) lines.push(t);
       } else { // experience / education

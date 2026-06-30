@@ -22,9 +22,11 @@ export interface ResumeSectionItem {
   items?: string;
   // Custom
   content?: string;
+  // Awards — one validated win per item, rendered as a single line
+  text?: string;
 }
 
-export type SectionType = 'education' | 'experience' | 'projects' | 'skills' | 'custom';
+export type SectionType = 'education' | 'experience' | 'projects' | 'skills' | 'custom' | 'awards';
 
 export interface ResumeSection {
   id: string;

@@ -15,8 +15,9 @@ export interface ResumeSectionItem {
   projectName?: string; techStack?: string; dateRange?: string;
   category?: string; items?: string;
   content?: string;
+  text?: string;
 }
-export type SectionType = 'education' | 'experience' | 'projects' | 'skills' | 'custom';
+export type SectionType = 'education' | 'experience' | 'projects' | 'skills' | 'custom' | 'awards';
 export interface ResumeSection {
   id: string; type: SectionType; title: string; visible: boolean; items: ResumeSectionItem[];
 }
@@ -39,7 +40,7 @@ const DEFAULT_SETTINGS: ResumeSettings = {
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 
-const SECTION_TYPES: SectionType[] = ['education', 'experience', 'projects', 'skills', 'custom'];
+const SECTION_TYPES: SectionType[] = ['education', 'experience', 'projects', 'skills', 'custom', 'awards'];
 
 function asStr(v: unknown): string {
   return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
@@ -94,6 +95,7 @@ function normalizeItem(raw: Record<string, unknown>, seen: Set<string>): ResumeS
     category: asOpt(raw.category),
     items: asJoined(raw.items),
     content: asOpt(raw.content),
+    text: asOpt(raw.text),
   };
 }
 
