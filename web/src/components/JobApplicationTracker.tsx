@@ -9,6 +9,7 @@ import Sidebar, { type TabId } from "@/components/layout/Sidebar";
 import ApplicationsTab from "@/components/tabs/ApplicationsTab";
 import MasterInfoTab from "@/components/tabs/MasterInfoTab";
 import AnalyticsTab from "@/components/tabs/AnalyticsTab";
+import ApiUsageTab from "@/components/tabs/ApiUsageTab";
 import ProfileTab from "@/components/tabs/ProfileTab";
 import TailorTab from "@/components/tabs/TailorTab";
 import JobsTab from "@/components/tabs/JobsTab";
@@ -628,11 +629,13 @@ export default function JobApplicationTracker({ session }: { session: any }) {
                   : "Applications"
               )}
               {activeTab === "analytics" && <>Analytics <span className="gradient-text">Insights</span></>}
+              {activeTab === "api-usage" && <>API <span className="gradient-text">Usage</span></>}
               {activeTab === "profile" && "Your Profile"}
             </h1>
             <p className="text-[13px] text-muted-foreground/60 mt-1.5">
               {activeTab === "applications" && `${apps.length} application${apps.length !== 1 ? "s" : ""} tracked`}
               {activeTab === "analytics" && "Performance insights across your entire job search"}
+              {activeTab === "api-usage" && "Every real Claude / OpenAI call the pipeline made — what, when, and cost"}
               {activeTab === "profile" && "Manage your account, data, and preferences"}
             </p>
           </div>
@@ -657,6 +660,10 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
           {activeTab === "analytics" && (
             <AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} />
+          )}
+
+          {activeTab === "api-usage" && (
+            <ApiUsageTab api={API} token={token} />
           )}
 
           {activeTab === "profile" && (
