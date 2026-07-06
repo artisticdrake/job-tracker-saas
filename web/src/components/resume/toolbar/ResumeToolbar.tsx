@@ -19,19 +19,16 @@ interface Props {
   onCreateVersion: (name: string) => Promise<void>;
   onDeleteVersion: (id: string) => Promise<void>;
   onRenameVersion: (id: string, name: string) => Promise<void>;
-  // Live scoring (content-addressed, against this version's JD)
+  // Scoring (content-addressed, against this version's JD) — fires only on "Score now" click
   liveScore: number | null;
   scoring: boolean;
-  scoreStale: boolean;
-  liveScoreOn: boolean;
-  onToggleLiveScore: () => void;
   onRerank: () => void;       // force a fresh score of the live content
   onReassemble: () => void;   // re-optimize into a NEW version
   reassembling: boolean;
   scoringDisabledReason: string | null;
 }
 
-function ScoreChip({ score, stale }: { score: number | null; stale: boolean }) {
+function ScoreChip({ score }: { score: number | null }) {
   if (score == null) return null;
   const cls =
     score >= 75 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
@@ -39,8 +36,8 @@ function ScoreChip({ score, stale }: { score: number | null; stale: boolean }) {
     : 'bg-red-500/15 text-red-400 border-red-500/30';
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-bold tabular-nums ${cls} ${stale ? 'opacity-50' : ''}`}
-      title={stale ? 'Resume changed since this score — re-ranking…' : 'Score of the live resume against this version’s job description'}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-bold tabular-nums ${cls}`}
+      title="Score of the resume as of the last 'Score now' click"
     >
       {score}<span className="font-normal opacity-70">/100</span>
     </span>
@@ -71,9 +68,6 @@ export default function ResumeToolbar({
   onRenameVersion,
   liveScore,
   scoring,
-  scoreStale,
-  liveScoreOn,
-  onToggleLiveScore,
   onRerank,
   onReassemble,
   reassembling,
@@ -136,29 +130,14 @@ export default function ResumeToolbar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* ── Live score ──────────────────────────────────────────────────── */}
+      {/* ── Score ──────────────────────────────────────────────────── */}
       <div
         className="flex items-center gap-2"
         title={scoringDisabledReason ?? undefined}
       >
-        <ScoreChip score={liveScore} stale={scoreStale} />
+        <ScoreChip score={liveScore} />
 
-        {/* Live score toggle (controls automatic LLM spend) */}
-        <label
-          className={`flex items-center gap-1 text-xs select-none ${scoringDisabledReason ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer text-muted-foreground'}`}
-          title={scoringDisabledReason ?? 'Automatically re-score after edits settle'}
-        >
-          <input
-            type="checkbox"
-            checked={liveScoreOn}
-            disabled={!!scoringDisabledReason}
-            onChange={onToggleLiveScore}
-            className="h-3 w-3 accent-primary"
-          />
-          Live score
-        </label>
-
-        {/* Manual force-refresh score (pure scoring — never mutates content) */}
+        {/* Manual score — the ONLY trigger for a /rerank/claude call. Editing never scores. */}
         <button
           type="button"
           onClick={onRerank}
@@ -172,7 +151,7 @@ export default function ResumeToolbar({
               Scoring…
             </>
           ) : (
-            <>⟳ Re-rank</>
+            <>⟳ Score now</>
           )}
         </button>
 
