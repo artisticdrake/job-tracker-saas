@@ -163,6 +163,9 @@ export default function SectionList({ content, onChange }: Props) {
       projects: 'Projects',
       skills: 'Technical Skills',
       custom: 'Custom Section',
+      // Awards sections are produced by the tailor/assembler, not added manually
+      // (no button in SECTION_TYPES) — this entry only satisfies the Record type.
+      awards: 'Awards & Recognition',
     };
     const newSection: ResumeSection = {
       id: uid(),

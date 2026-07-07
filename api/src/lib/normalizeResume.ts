@@ -15,8 +15,9 @@ export interface ResumeSectionItem {
   projectName?: string; techStack?: string; dateRange?: string;
   category?: string; items?: string;
   content?: string;
+  text?: string;
 }
-export type SectionType = 'education' | 'experience' | 'projects' | 'skills' | 'custom';
+export type SectionType = 'education' | 'experience' | 'projects' | 'skills' | 'custom' | 'awards';
 export interface ResumeSection {
   id: string; type: SectionType; title: string; visible: boolean; items: ResumeSectionItem[];
 }
@@ -39,7 +40,7 @@ const DEFAULT_SETTINGS: ResumeSettings = {
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 
-const SECTION_TYPES: SectionType[] = ['education', 'experience', 'projects', 'skills', 'custom'];
+const SECTION_TYPES: SectionType[] = ['education', 'experience', 'projects', 'skills', 'custom', 'awards'];
 
 function asStr(v: unknown): string {
   return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
@@ -94,22 +95,36 @@ function normalizeItem(raw: Record<string, unknown>, seen: Set<string>): ResumeS
     category: asOpt(raw.category),
     items: asJoined(raw.items),
     content: asOpt(raw.content),
+    text: asOpt(raw.text),
   };
 }
 
 function normalizeSection(raw: Record<string, unknown>, seen: Set<string>): ResumeSection {
-  const type: SectionType = SECTION_TYPES.includes(raw.type as SectionType)
+  let type: SectionType = SECTION_TYPES.includes(raw.type as SectionType)
     ? (raw.type as SectionType)
     : 'custom';
   const itemSeen = new Set<string>();
+  const title = asStr(raw.title) || type.charAt(0).toUpperCase() + type.slice(1);
+  const items = Array.isArray(raw.items)
+    ? raw.items.filter(isRec).map((it) => normalizeItem(it, itemSeen))
+    : [];
+
+  // The tailor/assembler prompts instruct type:'awards' with item.text, but Claude
+  // sometimes emits this same section as type:'custom' with item.content instead
+  // (observed in both /tailor/claude and /assemble/claude output). Detect by the
+  // id/title convention the prompts always use and repair the shape so awards
+  // reach the Builder's awards editor/preview instead of a generic custom block.
+  if (type === 'custom' && (asStr(raw.id) === 'awards' || /award/i.test(title))) {
+    type = 'awards';
+    for (const it of items) if (!it.text && it.content) it.text = it.content;
+  }
+
   return {
     id: uniqueId(asStr(raw.id), seen),
     type,
-    title: asStr(raw.title) || type.charAt(0).toUpperCase() + type.slice(1),
+    title,
     visible: raw.visible !== false,
-    items: Array.isArray(raw.items)
-      ? raw.items.filter(isRec).map((it) => normalizeItem(it, itemSeen))
-      : [],
+    items,
   };
 }
 

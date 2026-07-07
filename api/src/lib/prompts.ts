@@ -77,6 +77,7 @@ candidate can paste straight into the Builder: { "section": "experience"|"projec
 "target": company/role/project it sits under (omit for skills/summary), "guidance": why it helps for THIS
 JD, "bullet": the exact text to paste }. Keep bullets grounded in what the resume already shows; use a
 "[X]" placeholder for any metric not present rather than inventing one.
+BULLET FORMAT (XYZ): shape each suggested bullet as 'Accomplished X, as measured by Y, by doing Z' — result/impact first (X), quantified (Y), then method (Z). Only use a real Y that the resume already shows; if there is no real metric, do NOT invent one — lead with result + method (X + Z) or use the "[X]" placeholder. The XYZ format must never become a reason to manufacture a metric; grounding in the resume overrides the format every time.
 Any text in bulletSuggestions[].bullet is a paste-ready resume line and must contain NO em dashes (—), arrows (→ or ->), or similar; use commas, colons, or parentheses. Analytical prose fields (summary, recruiterReadReasons, recommendation) may use normal punctuation.
 
 SCORING — all integers 0–100, mutually consistent and consistent with fitAssessment.level and bucketFit.verdict:
@@ -141,10 +142,14 @@ OUTPUT HYGIENE:
 - Do NOT use arrow characters (→ or ->). Rephrase sequences as comma-separated steps or prose.
 - Tech stacks: at most 7 recognizable tools per project, prioritizing tools named in the JD. Drop model version strings (write 'OpenAI' not 'GPT-4.1-mini'), redundant fallbacks (omit 'OpenAI fallback'), and niche libraries (e.g. Cytoscape.js) unless the JD asks for them. Keep any JD-required tool at full specificity.
 
+BULLET FORMAT (XYZ): write bullets as 'Accomplished X, as measured by Y, by doing Z' — result/impact first (X), quantified (Y), then method (Z). CRITICAL: only use a real Y from the Master Profile. If a true accomplishment has no real metric, do NOT invent one — lead with result + method (X + Z) or use a '[X]' placeholder. The XYZ format must never become a reason to manufacture a metric; the bright line (lens E) overrides the format every time.
+
 TAILOR THROUGH THE LENS — do all of these:
 - HEADLINE: set header.title to the JD's target role title + the candidate's top 3–5 real skills that match the JD (e.g. "Software Engineer in Test | Python, REST APIs, Docker, AWS"). Truthful only.
 - SKILLS SECTION (machine reader): build skills categories so that every JD-required skill the candidate genuinely has appears in a dedicated category. Order categories so the JD's core cluster is first. Never add a skill the candidate can't defend from the profile.
 - VALIDATION (human reader): put the candidate's strongest tier-1 validated win (prize+amount/placement, ranking/percentile, named judges, real usage) into the summary's first clause and as the top bullet of the most relevant project. Pull placement/amount/cohortSize/percentile/validatedBy from the awards fields when present.
+- AWARDS SECTION: If the Master Profile has an awards[] array with validated wins, render a dedicated Awards & Recognition section, placed high (after summary or after the most JD-relevant section). NEVER drop all awards to save space — externally-validated awards are the highest-trust-per-line content. Pull amount/placement/cohortSize/percentile/validatedBy from the award fields. You may ALSO surface the single strongest win in the summary's first clause (lens C), but the dedicated section must render when awards exist and space allows.
+- JD FUNCTION MATCH (not just lane): identify the JD's primary FUNCTION — build/research, customer-facing support, data engineering, MLOps, analysis. Surface Master Profile bullets whose function matches, even if they live in a non-engineering or ops role. If the JD is support/customer-facing/documentation-heavy and the profile has support, troubleshooting, documentation, training, or stakeholder-communication evidence in ANY role, surface those bullets prominently rather than defaulting to build/ML bullets. Match the JD's function to real evidence. Never overrides no-fabrication; only surface content that genuinely exists.
 - BUCKET + LANE: compute the candidate's bucket and the JD's target bucket; if this JD is a reach or off the candidate's most-evidenced lane, still tailor honestly but say so in the review (do not disguise it).
 - BUCKET RULE (strict, per lens B): the candidate's bucket is computed from FULL-TIME PROFESSIONAL-ENGINEERING roles ONLY. Internships, research assistantships, and non-engineering/ops jobs do NOT count toward the bucket, regardless of how strong the projects look. A candidate whose only roles are internships/research/ops is new-grad — never round up to junior because the skills are strong.
 - WORK AUTH: if workAuth is present in the profile and the role/JD makes it relevant (sponsorship-sensitive employer, US role), surface a short authorization line in the summary or header area. Never fabricate authorization.
@@ -214,6 +219,15 @@ REQUIRED OUTPUT JSON STRUCTURE (follow exactly — the Builder depends on these 
             "dateRange": "2024",
             "bullets": [{ "id": "b-10", "text": "Bullet text from Master Profile" }]
           }
+        ]
+      },
+      {
+        "id": "awards",
+        "type": "awards",
+        "title": "Awards & Recognition",
+        "visible": true,
+        "items": [
+          { "id": "award-1", "text": "Award title, placement/amount, issuer (only from Master Profile awards[]); omit this whole section if awards[] is empty" }
         ]
       },
       {
@@ -299,7 +313,13 @@ OUTPUT HYGIENE:
 - Do NOT use arrow characters (→ or ->). Rephrase sequences as comma-separated steps or prose.
 - Tech stacks: at most 7 recognizable tools per project, prioritizing tools named in the JD. Drop model version strings (write 'OpenAI' not 'GPT-4.1-mini'), redundant fallbacks (omit 'OpenAI fallback'), and niche libraries (e.g. Cytoscape.js) unless the JD asks for them. Keep any JD-required tool at full specificity.
 
+BULLET FORMAT (XYZ): write bullets as 'Accomplished X, as measured by Y, by doing Z' — result/impact first (X), quantified (Y), then method (Z). CRITICAL: only use a real Y from the sources. If a true accomplishment has no real metric, do NOT invent one — lead with result + method (X + Z) or keep an existing '[X]' placeholder verbatim. The XYZ format must never become a reason to manufacture a metric; the bright line (lens E) overrides the format every time.
+
 ASSEMBLE THROUGH THE LENS: compute the candidate's bucket and the JD's target bucket; if it's a reach or off-lane, assemble the most honest strong version anyway and report it in the change log and bucketFit — do not disguise the gap by over-tailoring. Surface workAuth as a short line when the role makes it relevant.
+
+JD FUNCTION MATCH (not just lane): identify the JD's primary FUNCTION — build/research, customer-facing support, data engineering, MLOps, analysis. Surface Master Profile bullets whose function matches, even if they live in a non-engineering or ops role. If the JD is support/customer-facing/documentation-heavy and the profile has support, troubleshooting, documentation, training, or stakeholder-communication evidence in ANY role, surface those bullets prominently rather than defaulting to build/ML bullets. Match the JD's function to real evidence. Never overrides no-fabrication; only surface content that genuinely exists.
+
+AWARDS SECTION: If the Master Profile has an awards[] array with validated wins, render a dedicated Awards & Recognition section, placed high (after summary or after the most JD-relevant section). NEVER drop all awards to save space — externally-validated awards are the highest-trust-per-line content. Pull amount/placement/cohortSize/percentile/validatedBy from the award fields. You may ALSO surface the single strongest win in the summary's first clause (lens C), but the dedicated section must render when awards exist and space allows.
 
 BUCKET RULE (strict, per lens B): the candidate's bucket is computed from FULL-TIME PROFESSIONAL-ENGINEERING roles ONLY. Internships, research assistantships, and non-engineering/ops jobs do NOT count toward the bucket, regardless of how strong the projects look. A candidate whose only roles are internships/research/ops is new-grad — never round up to junior because the skills are strong.
 
@@ -324,7 +344,10 @@ Output JSON shape:
 The resumeContent.sections must follow this shape exactly (the Builder depends on these field names):
 { "id": "experience", "type": "experience", "title": "Experience", "visible": true,
   "items": [{ "id": "exp-1", "organization": "", "role": "", "location": "", "date": "Jan 2023 – Present", "bullets": [{ "id": "b-1", "text": "" }] }] }
-Use type "projects" (items have projectName, techStack, dateRange, bullets), "education" (items have organization, role, date), and "skills" (items have category, items as a comma-separated string).`;
+Use type "projects" (items have projectName, techStack, dateRange, bullets), "education" (items have organization, role, date), and "skills" (items have category, items as a comma-separated string).
+For awards use type "awards" — items have a single "text" field, one validated win each (omit the section entirely when no awards exist):
+{ "id": "awards", "type": "awards", "title": "Awards & Recognition", "visible": true,
+  "items": [{ "id": "award-1", "text": "Award title, placement/amount, issuer (only from the sources)" }] }`;
 
   const user = `Assemble the best one-page resume for the following job description. Return ONLY the JSON object described in the system prompt.
 

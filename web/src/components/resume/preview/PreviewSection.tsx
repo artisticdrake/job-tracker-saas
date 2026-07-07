@@ -52,6 +52,26 @@ export default function PreviewSection({ section, settings }: Props) {
         <PreviewSkills items={section.items} fontSize={fontSize} lineSpacing={lineSpacing} />
       )}
 
+      {section.type === 'awards' && (
+        <ul style={{
+          listStyleType: 'disc',
+          listStylePosition: 'outside',
+          margin: `${fontSize * 0.15}pt 0 0 0`,
+          paddingLeft: `${fontSize * 1.2}pt`,
+          lineHeight: lineSpacing,
+        }}>
+          {section.items
+            .filter((item) => item.text?.trim())
+            .map((item) => (
+              <li
+                key={item.id}
+                style={{ fontSize: `${fontSize}pt`, marginBottom: `${fontSize * 0.1}pt`, paddingLeft: '2pt' }}
+                dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(item.text ?? '') }}
+              />
+            ))}
+        </ul>
+      )}
+
       {section.type === 'custom' &&
         section.items.map((item) => (
           <div

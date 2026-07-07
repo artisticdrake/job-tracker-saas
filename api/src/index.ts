@@ -13,6 +13,7 @@ import { normalizeResumeContent, normalizeResumeSettings, normalizeReview } from
 import { buildScorerPrompt, buildTailorPrompt, buildAssemblerPrompt, buildCoverLetterPrompt } from './lib/prompts';
 import { sanitizeResumeContent, sanitizeBulletSuggestions, sanitizeResumeText } from './lib/sanitizeResumeText';
 import { scrapeAndNormalizeBuiltin } from './lib/apifyBuiltin';
+import { logLlmCall, callOpenAIChat, type LlmCallMeta } from './lib/llmLog';
 
 dotenv.config({ path: require('path').resolve(__dirname, '../.env') });
 
@@ -43,27 +44,51 @@ const hashContent = (rc: unknown) => sha(resumeContentToText(rc as any));
 // defensive JSON parse (strip fences, then regex-extract the object). Factored
 // here so every path is identical and there is one place to change it. The
 // prompt copy itself still lives only in lib/prompts.ts.
-async function callClaudeJSON(apiKey: string, system: string, user: string, maxTokens: number): Promise<any> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: maxTokens,
-      temperature: 0,
-      system,
-      messages: [{ role: 'user', content: user }],
-    }),
-  });
-
-  const responseData = await response.json() as any;
-  if (!response.ok) {
-    throw new Error(responseData?.error?.message || 'Claude API error');
+async function callClaudeJSON(apiKey: string, system: string, user: string, maxTokens: number, meta: LlmCallMeta): Promise<any> {
+  const startedAt = Date.now();
+  const MODEL = 'claude-sonnet-4-6';
+  let response: Response;
+  let responseData: any;
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: maxTokens,
+        temperature: 0,
+        system,
+        messages: [{ role: 'user', content: user }],
+      }),
+    });
+    responseData = await response.json() as any;
+  } catch (err: any) {
+    // Network / transport failure — no response body, no tokens.
+    logLlmCall({ provider: 'anthropic', model: MODEL, ...meta, status: 'error', errorMessage: err?.message ?? String(err), latencyMs: Date.now() - startedAt });
+    throw err;
   }
+
+  if (!response.ok) {
+    const errMsg = responseData?.error?.message || 'Claude API error';
+    logLlmCall({ provider: 'anthropic', model: responseData?.model || MODEL, ...meta, status: 'error', errorMessage: errMsg, latencyMs: Date.now() - startedAt });
+    throw new Error(errMsg);
+  }
+
+  // The call succeeded and consumed tokens — log it before parsing so a malformed
+  // -JSON throw below still records the real spend.
+  logLlmCall({
+    provider: 'anthropic',
+    model: responseData?.model || MODEL,
+    ...meta,
+    inputTokens: responseData?.usage?.input_tokens ?? null,
+    outputTokens: responseData?.usage?.output_tokens ?? null,
+    status: 'success',
+    latencyMs: Date.now() - startedAt,
+  });
 
   const rawText: string = responseData?.content?.[0]?.text ?? '';
   try {
@@ -85,10 +110,10 @@ async function callClaudeJSON(apiKey: string, system: string, user: string, maxT
 // the "should this candidate apply" triage score, computed before any resume
 // exists — shared by /internal/score-job and /jobs/:id/score so a board score
 // matches what the standalone scorer would produce for the same JD.
-async function runProfileScorer(lib: any, jdText: string, apiKey: string): Promise<any> {
+async function runProfileScorer(lib: any, jdText: string, apiKey: string, meta: Omit<LlmCallMeta, 'purpose'> = {}): Promise<any> {
   const resumeText = masterProfileToText(lib ?? {});
   const { system, user } = buildScorerPrompt(jdText, resumeText);
-  const parsed = await callClaudeJSON(apiKey, system, user, 3000);
+  const parsed = await callClaudeJSON(apiKey, system, user, 3000, { purpose: 'score-job', ...meta });
   // Use the RAW scorer review: normalizeReview whitelists only the tailor/builder
   // UI fields and drops atsScore / recruiterScore / bucketFit / laneWarning, which
   // the triage board needs. We only sanitize the paste-ready bullets.
@@ -104,10 +129,10 @@ async function runProfileScorer(lib: any, jdText: string, apiKey: string): Promi
 // Tailor a one-page resume from the Master Profile + JD (buildTailorPrompt),
 // coerced + sanitized to the Builder's exact shape. The raw generation core
 // shared by /tailor/claude (via tailorWithCache) and /jobs/:id/generate.
-async function runProfileTailor(lib: any, jdText: string, apiKey: string): Promise<{ resumeContent: any; review: any }> {
+async function runProfileTailor(lib: any, jdText: string, apiKey: string, meta: Omit<LlmCallMeta, 'purpose'> = {}): Promise<{ resumeContent: any; review: any }> {
   const masterProfileJson = JSON.stringify(lib, null, 2);
   const { system, user } = buildTailorPrompt(masterProfileJson, jdText);
-  const parsed = await callClaudeJSON(apiKey, system, user, 6000);
+  const parsed = await callClaudeJSON(apiKey, system, user, 6000, { purpose: 'tailor', ...meta });
   if (!Array.isArray(parsed.resumeContent?.sections) || parsed.resumeContent.sections.length === 0) {
     throw new Error('Claude response missing resumeContent.sections');
   }
@@ -123,9 +148,9 @@ async function runProfileTailor(lib: any, jdText: string, apiKey: string): Promi
 // row with no Claude call. Shared by /tailor/claude and /jobs/:id/generate so the
 // generate flow reuses the exact tailor cache (not a separate path).
 async function tailorWithCache(opts: {
-  userId: string; lib: any; jobDescription: string; applicationId?: string | null; apiKey: string;
+  userId: string; lib: any; jobDescription: string; applicationId?: string | null; apiKey: string; source?: string;
 }): Promise<{ resumeContent: any; review: any; fromCache: boolean }> {
-  const { userId, lib, jobDescription, applicationId, apiKey } = opts;
+  const { userId, lib, jobDescription, applicationId, apiKey, source } = opts;
   const jdHash = hashJD(jobDescription);
   const profileHash = hashProfile(lib);
 
@@ -149,7 +174,7 @@ async function tailorWithCache(opts: {
     console.warn('[tailorWithCache] cache lookup failed (continuing without cache):', err.message);
   }
 
-  const { resumeContent, review } = await runProfileTailor(lib, jobDescription, apiKey);
+  const { resumeContent, review } = await runProfileTailor(lib, jobDescription, apiKey, { userId, source: source ?? 'user' });
 
   const { error: saveErr } = await supabase
     .from('tailor_results')
@@ -224,9 +249,9 @@ async function createBuilderVersion(authClient: any, userId: string, opts: {
 // UNEDITED stored letter for the same JD + profile is returned with no Claude call.
 async function generateAndStoreCoverLetter(opts: {
   userId: string; lib: any; jobDescription: string; applicationId?: string | null;
-  company?: string; role?: string; apiKey: string;
+  company?: string; role?: string; apiKey: string; source?: string;
 }): Promise<{ id: string | null; coverLetter: string; footer: string | null; fromCache: boolean }> {
-  const { userId, lib, jobDescription, applicationId, company, role, apiKey } = opts;
+  const { userId, lib, jobDescription, applicationId, company, role, apiKey, source } = opts;
   const jdHash = hashJD(jobDescription);
   const profileHash = hashProfile(lib);
 
@@ -252,7 +277,7 @@ async function generateAndStoreCoverLetter(opts: {
     typeof company === 'string' ? company : undefined,
     typeof role === 'string' ? role : undefined,
   );
-  const parsed = await callClaudeJSON(apiKey, system, user, 1500);
+  const parsed = await callClaudeJSON(apiKey, system, user, 1500, { purpose: 'cover-letter', userId, source: source ?? 'user' });
   if (typeof parsed.coverLetter !== 'string' || !parsed.coverLetter.trim()) {
     throw new Error('Claude response missing coverLetter');
   }
@@ -592,12 +617,12 @@ PAGE TEXT:
 ${pageText}`;
 
   try {
-    const completion = await getOpenAI().chat.completions.create({
+    const completion = await callOpenAIChat(getOpenAI(), {
       model: 'gpt-4o-mini',
       max_tokens: 3000,
       temperature: 0,
       messages: [{ role: 'user', content: prompt }],
-    });
+    }, { purpose: 'autofill', userId: (req as any).user?.id ?? null, source: 'user', route: '/autofill' });
 
     const raw = completion.choices[0].message.content?.trim() || '';
     const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
@@ -741,7 +766,7 @@ Screening: ${statusCounts['Screening']} | Interviews: ${interviews} | Offers: ${
 ${profileSection}`;
 
   try {
-    const response = await getOpenAI().chat.completions.create({
+    const response = await callOpenAIChat(getOpenAI(), {
       model: 'gpt-4o-mini',
       max_tokens: 500,
       temperature: 0.2,
@@ -749,7 +774,7 @@ ${profileSection}`;
         { role: 'system', content: 'You are Mira, a warm and empathetic AI career assistant who gives honest, grounded feedback. You are encouraging but never dishonest. You speak plainly, avoid bullet points, and never use em dashes.' },
         { role: 'user', content: prompt },
       ],
-    });
+    }, { purpose: 'summary', userId: (req as any).user?.id ?? null, source: 'user', route: '/summary' });
 
     const summary = response.choices[0].message.content?.trim() || '';
     return res.json({ success: true, summary, hasProfile });
@@ -838,8 +863,7 @@ Resume text:
 ${text.slice(0, 12000)}`;
 
   try {
-    const ai = getOpenAI();
-    const completion = await ai.chat.completions.create({
+    const completion = await callOpenAIChat(getOpenAI(), {
       model: 'gpt-4.1-mini',
       messages: [
         { role: 'system', content: systemPrompt },
@@ -847,7 +871,7 @@ ${text.slice(0, 12000)}`;
       ],
       temperature: 0,
       response_format: { type: 'json_object' },
-    });
+    }, { purpose: 'seed-from-text', userId: (req as any).user?.id ?? null, source: 'user', route: '/master-profile/seed-from-text' });
 
     const raw = completion.choices[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(raw);
@@ -937,7 +961,7 @@ app.post('/tailor/claude', requireAuth, async (req, res) => {
 
   try {
     const { resumeContent, review, fromCache } = await tailorWithCache({
-      userId, lib, jobDescription, applicationId, apiKey,
+      userId, lib, jobDescription, applicationId, apiKey, source: 'user',
     });
     console.log(`[/tailor/claude] userId=${userId} fromCache=${fromCache} sections=${resumeContent.sections.length} fit=${(review as any)?.fitAssessment?.level ?? 'none'} score=${review?.matchScore ?? 'n/a'}`);
     return res.json({ success: true, resumeContent, review, fromCache });
@@ -995,47 +1019,11 @@ app.post('/rerank/claude', requireAuth, async (req, res) => {
   const { system: systemPrompt, user: userMessage } = buildScorerPrompt(jobDescription, resumeContentToText(resumeContent));
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 3000,
-        temperature: 0,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      }),
+    // Shared core (model, parse, AND request logging) — folded in from a former
+    // inline fetch so this real scorer call is tracked like every other Claude call.
+    const parsed = await callClaudeJSON(apiKey, systemPrompt, userMessage, 3000, {
+      purpose: 'rerank', userId, source: 'user', route: '/rerank/claude',
     });
-
-    const responseData = await response.json() as any;
-    if (!response.ok) {
-      const errMsg = responseData?.error?.message || 'Claude API error';
-      console.error('[/rerank/claude] Anthropic error:', errMsg);
-      return res.status(500).json({ success: false, error: errMsg });
-    }
-
-    const rawText: string = responseData?.content?.[0]?.text ?? '';
-
-    let parsed: any;
-    try {
-      const cleaned = rawText
-        .replace(/^```(?:json)?\s*/m, '')
-        .replace(/\s*```\s*$/m, '')
-        .trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (!match) {
-        console.error('[/rerank/claude] invalid JSON from Claude:', rawText.slice(0, 300));
-        return res.status(500).json({ success: false, error: 'Claude returned malformed JSON' });
-      }
-      try { parsed = JSON.parse(match[0]); }
-      catch { return res.status(500).json({ success: false, error: 'Could not parse Claude response as JSON' }); }
-    }
 
     const review = normalizeReview(parsed.review ?? parsed);
     if (!review) {
@@ -1136,47 +1124,11 @@ app.post('/assemble/claude', requireAuth, async (req, res) => {
   const { system: systemPrompt, user: userMessage } = buildAssemblerPrompt(lib, currentResume, approvedBullets, jobDescription);
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 6000,
-        temperature: 0,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      }),
+    // Shared core (model, parse, AND request logging) — folded in from a former
+    // inline fetch so this real assemble call is tracked like every other Claude call.
+    const parsed = await callClaudeJSON(apiKey, systemPrompt, userMessage, 6000, {
+      purpose: 'assemble', userId, source: 'user', route: '/assemble/claude',
     });
-
-    const responseData = await response.json() as any;
-    if (!response.ok) {
-      const errMsg = responseData?.error?.message || 'Claude API error';
-      console.error('[/assemble/claude] Anthropic error:', errMsg);
-      return res.status(500).json({ success: false, error: errMsg });
-    }
-
-    const rawText: string = responseData?.content?.[0]?.text ?? '';
-
-    let parsed: any;
-    try {
-      const cleaned = rawText
-        .replace(/^```(?:json)?\s*/m, '')
-        .replace(/\s*```\s*$/m, '')
-        .trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (!match) {
-        console.error('[/assemble/claude] invalid JSON from Claude:', rawText.slice(0, 300));
-        return res.status(500).json({ success: false, error: 'Claude returned malformed JSON' });
-      }
-      try { parsed = JSON.parse(match[0]); }
-      catch { return res.status(500).json({ success: false, error: 'Could not parse Claude response as JSON' }); }
-    }
 
     if (!Array.isArray(parsed.resumeContent?.sections) || parsed.resumeContent.sections.length === 0) {
       return res.status(500).json({ success: false, error: 'Claude response missing resumeContent.sections' });
@@ -1256,7 +1208,7 @@ app.post('/cover-letter/claude', requireAuth, async (req, res) => {
       userId, lib, jobDescription, applicationId,
       company: typeof company === 'string' ? company : undefined,
       role: typeof role === 'string' ? role : undefined,
-      apiKey,
+      apiKey, source: 'user',
     });
     console.log(`[/cover-letter/claude] userId=${userId} fromCache=${fromCache} len=${coverLetter.length} id=${id ?? 'n/a'}`);
     return res.json({ success: true, id, coverLetter, footer, fromCache });
@@ -1534,6 +1486,7 @@ const postedAtOrNull = (v: any): string | null => {
 async function scoreInlineJobForOwner(
   ownerId: string, apiKey: string, lib: any,
   input: { jd_text: string; title?: any; company?: any; location?: any; url?: any; source?: any; posted_at?: any },
+  opts: { scrapeSessionId?: string; scrapedAt?: string; logSource?: string } = {},
 ): Promise<{ jd_hash: string; status: string; match_score: number | null; deduped: boolean; job: any }> {
   const jdText = cleanJdText(input.jd_text);
   const jdHash = hashJD(jdText);
@@ -1541,28 +1494,36 @@ async function scoreInlineJobForOwner(
   const { data: existing, error: exErr } = await supabase
     .from('scraped_jobs').select('*').eq('user_id', ownerId).eq('jd_hash', jdHash).maybeSingle();
   if (exErr) throw new Error(exErr.message);
+  // DEDUPE: an already-scored row is returned untouched — so it KEEPS its original
+  // scrape_session_id and is not re-stamped into a later scrape's session.
   if (existing && existing.status === 'scored') {
     return { jd_hash: jdHash, status: existing.status, match_score: existing.match_score, deduped: true, job: existing };
   }
 
-  // Insert new / refresh an unscored row's metadata, then score it.
+  // Insert new / refresh an unscored row's metadata, then score it. The scrape-session
+  // stamp is only set when the caller (/jobs/scrape) provides it; omitting the keys
+  // leaves any existing values untouched, so internal/manual paths are unchanged.
+  const upsertRow: Record<string, any> = {
+    user_id: ownerId,
+    source: normalizeSource(input.source),
+    title: typeof input.title === 'string' ? input.title : null,
+    company: typeof input.company === 'string' ? input.company : null,
+    location: typeof input.location === 'string' ? input.location : null,
+    url: typeof input.url === 'string' ? input.url : null,
+    posted_at: postedAtOrNull(input.posted_at),
+    jd_text: jdText,
+    jd_hash: jdHash,
+  };
+  if (opts.scrapeSessionId !== undefined) upsertRow.scrape_session_id = opts.scrapeSessionId;
+  if (opts.scrapedAt !== undefined) upsertRow.scraped_at = opts.scrapedAt;
+
   const { data: job, error: upErr } = await supabase
     .from('scraped_jobs')
-    .upsert({
-      user_id: ownerId,
-      source: normalizeSource(input.source),
-      title: typeof input.title === 'string' ? input.title : null,
-      company: typeof input.company === 'string' ? input.company : null,
-      location: typeof input.location === 'string' ? input.location : null,
-      url: typeof input.url === 'string' ? input.url : null,
-      posted_at: postedAtOrNull(input.posted_at),
-      jd_text: jdText,
-      jd_hash: jdHash,
-    }, { onConflict: 'user_id,jd_hash' })
+    .upsert(upsertRow, { onConflict: 'user_id,jd_hash' })
     .select().single();
   if (upErr) throw new Error(upErr.message);
 
-  const review = await runProfileScorer(lib, job.jd_text, apiKey);
+  const review = await runProfileScorer(lib, job.jd_text, apiKey, { userId: ownerId, source: opts.logSource ?? 'internal' });
   const { data: updated, error: updErr } = await supabase
     .from('scraped_jobs')
     .update(scoredJobFields(review))
@@ -1614,7 +1575,7 @@ app.post('/internal/score-job', async (req, res) => {
       if (error) return res.status(500).json({ success: false, error: error.message });
       if (!job) return res.status(404).json({ success: false, error: 'Job not found for the configured owner.' });
 
-      const review = await runProfileScorer(lib, job.jd_text, apiKey);
+      const review = await runProfileScorer(lib, job.jd_text, apiKey, { userId: ownerId, source: 'internal', route: '/internal/score-job' });
       const { data: updated, error: updErr } = await supabase
         .from('scraped_jobs')
         .update(scoredJobFields(review))
@@ -1629,7 +1590,7 @@ app.post('/internal/score-job', async (req, res) => {
     if (!cleanJdText(jd_text)) {
       return res.status(400).json({ success: false, error: 'jobId or jd_text is required' });
     }
-    const result = await scoreInlineJobForOwner(ownerId, apiKey, lib, { jd_text, title, company, location, url, source, posted_at });
+    const result = await scoreInlineJobForOwner(ownerId, apiKey, lib, { jd_text, title, company, location, url, source, posted_at }, { logSource: 'internal' });
     console.log(`[/internal/score-job] ownerId=${ownerId} jobId=${result.job.id} match=${result.match_score} verdict=${result.job.bucket_verdict} deduped=${result.deduped}`);
     return res.json({ success: true, job: result.job, deduped: result.deduped });
   } catch (err: any) {
@@ -1645,6 +1606,7 @@ app.post('/internal/score-job', async (req, res) => {
 // /internal/score-jobs and /internal/scrape-and-score so there is ONE loop.
 async function runScoreBatch(
   ownerId: string, apiKey: string, lib: any, jobs: any[],
+  opts: { scrapeSessionId?: string; scrapedAt?: string; logSource?: string } = {},
 ): Promise<{ results: any[]; scored: number; deduped: number; skipped: number; errored: number }> {
   const results: any[] = [];
   let scored = 0, deduped = 0, skipped = 0, errored = 0;
@@ -1656,7 +1618,7 @@ async function runScoreBatch(
       continue;
     }
     try {
-      const r = await scoreInlineJobForOwner(ownerId, apiKey, lib, { ...j, jd_text: jdText });
+      const r = await scoreInlineJobForOwner(ownerId, apiKey, lib, { ...j, jd_text: jdText }, opts);
       results.push({ jd_hash: r.jd_hash, status: r.status, match_score: r.match_score, deduped: r.deduped });
       if (r.deduped) deduped++; else scored++;
     } catch (err: any) {
@@ -1694,7 +1656,7 @@ app.post('/internal/score-jobs', async (req, res) => {
     const lib = await loadOwnerProfileOr400(ownerId, res);
     if (!lib) return;
 
-    const { results, scored, deduped, skipped, errored } = await runScoreBatch(ownerId, apiKey, lib, jobs);
+    const { results, scored, deduped, skipped, errored } = await runScoreBatch(ownerId, apiKey, lib, jobs, { logSource: 'internal' });
 
     console.log(`[/internal/score-jobs] ownerId=${ownerId} count=${jobs.length} scored=${scored} deduped=${deduped} skipped=${skipped} errored=${errored}`);
     return res.json({ success: true, count: jobs.length, scored, deduped, skipped, errored, results });
@@ -1736,12 +1698,78 @@ app.post('/internal/scrape-and-score', async (req, res) => {
       return res.status(400).json({ success: false, error: `Scraped ${normalized.length} scorable jobs exceeds INTERNAL_BATCH_MAX (${batchMax}).` });
     }
 
-    const { results, scored, deduped, skipped, errored } = await runScoreBatch(ownerId, apiKey, lib, normalized);
+    const { results, scored, deduped, skipped, errored } = await runScoreBatch(ownerId, apiKey, lib, normalized, { logSource: 'job-pipeline' });
 
     console.log(`[/internal/scrape-and-score] ownerId=${ownerId} scraped=${scraped} missingDescription=${missingDescription} scorable=${normalized.length} scored=${scored} deduped=${deduped} skipped=${skipped} errored=${errored}`);
     return res.json({ success: true, scraped, missingDescription, count: normalized.length, scored, deduped, skipped, errored, results });
   } catch (err: any) {
     console.error('[/internal/scrape-and-score] error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /llm-logs (owner-only API request tracker) ──────────────────────────────
+// Returns the LLM call log written by logLlmCall — every REAL Claude/OpenAI call
+// (cache hits make no call and aren't logged). Owner-gated: the owner (matched by
+// INTERNAL_USER_ID or OWNER_EMAIL) reads ALL rows via the service-role client, so
+// the internal/Railway-pipeline rows (attributed to INTERNAL_USER_ID) are visible
+// alongside their own. A non-owner authenticated user sees only their own rows.
+// Query params: since (days, default 7), provider, purpose, limit (default 500, max 1000).
+app.get('/llm-logs', requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const ownerId = process.env.INTERNAL_USER_ID;
+  const ownerEmail = process.env.OWNER_EMAIL;
+  const isOwner = (!!ownerId && user.id === ownerId) || (!!ownerEmail && user.email === ownerEmail);
+
+  // Owner: read everything via service-role. Otherwise: own rows only (RLS via JWT).
+  const client = isOwner ? supabase : getAuthClient(req.headers.authorization as string);
+
+  const sinceDays = Math.min(365, Math.max(1, Number(req.query.since) || 7));
+  const sinceIso = new Date(Date.now() - sinceDays * 86400_000).toISOString();
+  const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 500));
+  const provider = typeof req.query.provider === 'string' ? req.query.provider : null;
+  const purpose = typeof req.query.purpose === 'string' ? req.query.purpose : null;
+
+  try {
+    // Detail list (filtered window, newest first).
+    let q = client.from('llm_api_logs').select('*').gte('created_at', sinceIso)
+      .order('created_at', { ascending: false }).limit(limit);
+    if (!isOwner) q = q.eq('user_id', user.id);
+    if (provider) q = q.eq('provider', provider);
+    if (purpose) q = q.eq('purpose', purpose);
+    const { data: logs, error } = await q;
+    if (error) return res.status(500).json({ success: false, error: error.message });
+
+    // Aggregates over a 30-day window (minimal columns) — today / 7d totals and a
+    // per-purpose cost/count breakdown, computed in-handler.
+    const aggSinceIso = new Date(Date.now() - 30 * 86400_000).toISOString();
+    let aggQ = client.from('llm_api_logs')
+      .select('created_at, cost_usd, purpose, provider, status')
+      .gte('created_at', aggSinceIso).limit(20000);
+    if (!isOwner) aggQ = aggQ.eq('user_id', user.id);
+    const { data: aggRows } = await aggQ;
+
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const weekAgo = Date.now() - 7 * 86400_000;
+    const agg = { callsToday: 0, costToday: 0, calls7d: 0, cost7d: 0, calls30d: 0, cost30d: 0 };
+    const byPurpose: Record<string, { calls: number; cost: number }> = {};
+    for (const r of aggRows ?? []) {
+      const t = new Date(r.created_at).getTime();
+      const cost = Number(r.cost_usd) || 0;
+      agg.calls30d++; agg.cost30d += cost;
+      if (t >= weekAgo) { agg.calls7d++; agg.cost7d += cost; }
+      if (t >= startOfToday.getTime()) { agg.callsToday++; agg.costToday += cost; }
+      const p = r.purpose || 'unknown';
+      (byPurpose[p] ??= { calls: 0, cost: 0 }).calls++;
+      byPurpose[p].cost += cost;
+    }
+    const round = (n: number) => Math.round(n * 1e6) / 1e6;
+    agg.costToday = round(agg.costToday); agg.cost7d = round(agg.cost7d); agg.cost30d = round(agg.cost30d);
+    for (const p of Object.keys(byPurpose)) byPurpose[p].cost = round(byPurpose[p].cost);
+
+    return res.json({ success: true, isOwner, logs: logs ?? [], aggregates: { ...agg, byPurpose } });
+  } catch (err: any) {
+    console.error('[/llm-logs] error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -1817,7 +1845,7 @@ app.post('/jobs/scrape', requireAuth, async (req, res) => {
     return res.status(500).json({ success: false, error: 'ANTHROPIC_API_KEY is not configured on the server.' });
   }
 
-  const { platform, searchQueries, searchLocation, maxResults } = req.body ?? {};
+  const { platform, searchQueries, searchLocation, maxResults, skipSenior } = req.body ?? {};
   if (typeof platform !== 'string' || !SCRAPE_PLATFORMS.has(platform)) {
     return res.status(400).json({ success: false, error: `Platform "${platform ?? ''}" is not yet supported. Only 'builtin' is available right now.` });
   }
@@ -1829,21 +1857,29 @@ app.post('/jobs/scrape', requireAuth, async (req, res) => {
   }
   const cappedMax = Math.max(1, Math.min(Number(maxResults) || 10, JOBS_SCRAPE_MAX));
   const batchMax = Number(process.env.INTERNAL_BATCH_MAX) || 150;
+  // Cost-saving seniority pre-filter is ON unless the client explicitly opts out.
+  const skipSeniorRoles = skipSenior !== false;
 
   try {
     const lib = await loadOwnerProfileOr400(userId, res, 'Your master profile is empty — build it first before scraping.');
     if (!lib) return;
 
-    const { scraped, normalized, missingDescription } = await scrapeAndNormalizeBuiltin({ searchQueries: queries, searchLocation, maxResults: cappedMax });
+    const { scraped, normalized, missingDescription, seniorityFiltered } =
+      await scrapeAndNormalizeBuiltin({ searchQueries: queries, searchLocation, maxResults: cappedMax }, { skipSenior: skipSeniorRoles });
 
     if (normalized.length > batchMax) {
       return res.status(400).json({ success: false, error: `Scraped ${normalized.length} scorable jobs exceeds INTERNAL_BATCH_MAX (${batchMax}).` });
     }
 
-    const { results, scored, deduped, skipped, errored } = await runScoreBatch(userId, apiKey, lib, normalized);
+    // One scrape call = one session: every row written here shares this id + timestamp
+    // so the UI can group a scrape's results. Deduped rows keep their original session.
+    const scrapeSessionId = crypto.randomUUID();
+    const scrapedAt = new Date().toISOString();
+    const { results, scored, deduped, skipped, errored } =
+      await runScoreBatch(userId, apiKey, lib, normalized, { scrapeSessionId, scrapedAt, logSource: 'job-pipeline' });
 
-    console.log(`[/jobs/scrape] userId=${userId} platform=${platform} scraped=${scraped} missingDescription=${missingDescription} scorable=${normalized.length} scored=${scored} deduped=${deduped} skipped=${skipped} errored=${errored}`);
-    return res.json({ success: true, platform, scraped, missingDescription, count: normalized.length, scored, deduped, skipped, errored, results });
+    console.log(`[/jobs/scrape] userId=${userId} platform=${platform} session=${scrapeSessionId} scraped=${scraped} missingDescription=${missingDescription} seniorityFiltered=${seniorityFiltered} scorable=${normalized.length} scored=${scored} deduped=${deduped} skipped=${skipped} errored=${errored}`);
+    return res.json({ success: true, platform, scrapeSessionId, scraped, missingDescription, seniorityFiltered, count: normalized.length, scored, deduped, skipped, errored, results });
   } catch (err: any) {
     console.error('[/jobs/scrape] error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
@@ -1876,7 +1912,7 @@ app.post('/jobs/:id/score', requireAuth, async (req, res) => {
   }
 
   try {
-    const review = await runProfileScorer(lib, job.jd_text, apiKey);
+    const review = await runProfileScorer(lib, job.jd_text, apiKey, { userId, source: 'user', route: '/jobs/:id/score' });
     const { data: updated, error: updErr } = await authClient
       .from('scraped_jobs')
       .update(scoredJobFields(review))
@@ -1922,7 +1958,7 @@ app.post('/jobs/:id/generate', requireAuth, async (req, res) => {
   try {
     // 1) Tailor (cached in tailor_results, exactly like /tailor/claude).
     const { resumeContent, review, fromCache } = await tailorWithCache({
-      userId, lib, jobDescription: job.jd_text, applicationId: null, apiKey,
+      userId, lib, jobDescription: job.jd_text, applicationId: null, apiKey, source: 'user',
     });
     const score = typeof review?.matchScore === 'number' ? Math.round(review.matchScore) : null;
 
@@ -1946,7 +1982,7 @@ app.post('/jobs/:id/generate', requireAuth, async (req, res) => {
     if (includeCoverLetter) {
       const cl = await generateAndStoreCoverLetter({
         userId, lib, jobDescription: job.jd_text, applicationId: null,
-        company: job.company ?? undefined, role: job.title ?? undefined, apiKey,
+        company: job.company ?? undefined, role: job.title ?? undefined, apiKey, source: 'user',
       });
       coverLetter = { id: cl.id, coverLetter: cl.coverLetter, fromCache: cl.fromCache };
     }

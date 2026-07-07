@@ -110,8 +110,6 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
 
   const [liveScore, setLiveScore] = useState<number | null>(assembleResult?.score ?? null);
   const [scoring, setScoring] = useState(false);
-  const [liveScoreOn, setLiveScoreOn] = useState(true);
-  const [scoreStale, setScoreStale] = useState(false);
   const [reassembling, setReassembling] = useState(false);
   const [banner, setBanner] = useState<AssembleResult | null>(assembleResult ?? null);
 
@@ -126,13 +124,13 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
     if (prevVersionId.current && prevVersionId.current !== activeVersionId) {
       setLiveScore(null);
       lastScoredJson.current = null;
-      setScoreStale(false);
     }
     prevVersionId.current = activeVersionId;
   }, [activeVersionId]);
 
-  // Score the LIVE rendered content against this version's JD. Cache hits (same
-  // rendered text + JD) cost no Claude call, so reverting an edit is free.
+  // Score the LIVE rendered content against this version's JD. Only called from the
+  // "Score now" button onClick — no effect/timer/on-change/on-blur may call this.
+  // Cache hit (same rendered text + JD as last score) short-circuits without a Claude call.
   const scoreContent = useCallback(async (force: boolean) => {
     if (!jd) return;
     const json = JSON.stringify(content);
@@ -148,23 +146,11 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
       if (data.success) {
         setLiveScore(typeof data.score === 'number' ? data.score : (data.review?.matchScore ?? null));
         lastScoredJson.current = json;
-        setScoreStale(false);
       }
     } catch { /* leave the prior score in place */ } finally {
       setScoring(false);
     }
   }, [jd, content, session]);
-
-  // Auto-rerank: ~3s after edits settle (past the 1.5s autosave), only when a JD
-  // exists, Live score is ON, and the content actually changed (dedupe by content).
-  useEffect(() => {
-    if (!liveScoreOn || !jd) return;
-    const json = JSON.stringify(content);
-    if (json === lastScoredJson.current) { setScoreStale(false); return; }
-    setScoreStale(true);
-    const t = setTimeout(() => { scoreContent(false); }, 3000);
-    return () => clearTimeout(t);
-  }, [content, jd, liveScoreOn, scoreContent]);
 
   // Re-assemble: re-optimize the CURRENT content against this version's JD into a
   // NEW version (never overwrites). Pure scoring (Re-rank) never mutates content.
@@ -221,9 +207,6 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
         onRenameVersion={renameVersion}
         liveScore={liveScore}
         scoring={scoring}
-        scoreStale={scoreStale}
-        liveScoreOn={liveScoreOn}
-        onToggleLiveScore={() => setLiveScoreOn((v) => !v)}
         onRerank={() => scoreContent(true)}
         onReassemble={handleReassemble}
         reassembling={reassembling}

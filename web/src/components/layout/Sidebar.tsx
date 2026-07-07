@@ -1,10 +1,10 @@
-import { LayoutDashboard, BookOpen, BarChart3, User, LogOut, Briefcase, FileText, Wand2, Target } from "lucide-react";
+import { LayoutDashboard, BookOpen, BarChart3, User, LogOut, Briefcase, FileText, Wand2, Target, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-export type TabId = "applications" | "master-info" | "analytics" | "profile" | "resume-builder" | "tailor" | "jobs";
+export type TabId = "applications" | "master-info" | "analytics" | "profile" | "resume-builder" | "tailor" | "jobs" | "api-usage";
 
 interface SidebarProps {
   activeTab: TabId;
@@ -23,6 +23,7 @@ const NAV_ITEMS: { id: TabId; label: string; icon: React.FC<{ className?: string
   { id: "analytics",      label: "Analytics",      icon: ({ className }) => <BarChart3 className={className} />      },
   { id: "resume-builder", label: "Resume Builder", icon: ({ className }) => <FileText className={className} />       },
   { id: "tailor",         label: "Tailor",         icon: ({ className }) => <Wand2 className={className} />          },
+  { id: "api-usage",      label: "API Usage",      icon: ({ className }) => <Activity className={className} />       },
   { id: "profile",        label: "Profile",        icon: ({ className }) => <User className={className} />           },
 ];
 

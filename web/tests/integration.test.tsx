@@ -113,7 +113,7 @@ describe('JobApplicationTracker — Builder live score', () => {
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/applications'), expect.anything()));
 
     await user.click(screen.getByRole('button', { name: /Resume Builder/i }));
-    const rerankBtn = await screen.findByRole('button', { name: /Re-rank$/i });
+    const rerankBtn = await screen.findByRole('button', { name: /Score now$/i });
     expect(rerankBtn).toBeEnabled();
     await user.click(rerankBtn);
 
@@ -138,7 +138,7 @@ describe('JobApplicationTracker — Builder live score', () => {
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/applications'), expect.anything()));
 
     await user.click(screen.getByRole('button', { name: /Resume Builder/i }));
-    const rerankBtn = await screen.findByRole('button', { name: /Re-rank$/i });
+    const rerankBtn = await screen.findByRole('button', { name: /Score now$/i });
     expect(rerankBtn).toBeDisabled();
 
     const calledRerank = (global.fetch as any).mock.calls.some((c: any[]) => String(c[0]).includes('/rerank/claude'));
