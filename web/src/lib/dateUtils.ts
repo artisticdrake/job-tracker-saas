@@ -3,6 +3,13 @@ export function todayISO(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+export function tsToYYYYMMDD(ts: number | string | null | undefined): string {
+  if (!ts) return todayISO();
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return todayISO();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export function parseLocalYYYYMMDD(s: string | null | undefined): Date | null {
   if (!s || typeof s !== "string") return null;
   const [y, m, d] = s.split("-").map(Number);

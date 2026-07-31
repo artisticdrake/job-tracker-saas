@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { todayISO, startOfWeekISO } from "@/lib/dateUtils";
+import { todayISO, startOfWeekISO, tsToYYYYMMDD } from "@/lib/dateUtils";
 import { STATUSES, SOURCES } from "@/lib/constants";
 import type { JobApplication, AppFormData } from "@/lib/types";
 import type { AssembleResult } from "@/components/tabs/TailorTab";
@@ -509,9 +509,12 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   };
 
   const handleEdit = (app: JobApplication) => {
-    // Status Date always defaults to today — it's "when did this status change
-    // happen", not a stored field, so it only matters if the user overrides it.
-    setFormData({ ...app, statusDate: todayISO(), jobDescription: app.jobDescription ?? "", documents: app.documents ?? [] });
+    // Default Status Date to the current status's own recorded date (not
+    // "today") — so if the user edits some other field without touching this
+    // one, resubmitting is a no-op and doesn't silently rewrite the timeline.
+    // Picking a different status in the dropdown resets this to today.
+    const lastTs = app.timeline?.[app.timeline.length - 1]?.ts;
+    setFormData({ ...app, statusDate: tsToYYYYMMDD(lastTs), jobDescription: app.jobDescription ?? "", documents: app.documents ?? [] });
     setEditId(app.id);
     setExpandedApp(null);
     setShowForm(true);
@@ -564,10 +567,22 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     if (editId) {
       const existing = apps.find((a) => a.id === editId);
       const prevTl = existing?.timeline ?? [];
-      const lastStatus = prevTl[prevTl.length - 1]?.status;
-      const statusChanged = lastStatus !== formData.status;
-      updatedTimeline = statusChanged ? [...prevTl, { status: formData.status, ts: statusTs }] : prevTl;
-      lastUpdatedTs = statusChanged ? statusTs : now;
+      const lastEntry = prevTl[prevTl.length - 1];
+      const statusChanged = lastEntry?.status !== formData.status;
+      // Same status, but the Status Date was edited to a different day —
+      // correct that entry's date in place instead of appending a duplicate.
+      const dateCorrected = !statusChanged && lastEntry && tsToYYYYMMDD(lastEntry.ts) !== formData.statusDate;
+
+      if (statusChanged) {
+        updatedTimeline = [...prevTl, { status: formData.status, ts: statusTs }];
+        lastUpdatedTs = statusTs;
+      } else if (dateCorrected) {
+        updatedTimeline = [...prevTl.slice(0, -1), { ...lastEntry, ts: statusTs }];
+        lastUpdatedTs = statusTs;
+      } else {
+        updatedTimeline = prevTl;
+        lastUpdatedTs = now;
+      }
     } else {
       updatedTimeline = [{ status: formData.status || "Applied", ts: statusTs }];
       lastUpdatedTs = statusTs;
