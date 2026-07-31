@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { todayISO, startOfWeekISO, tsToYYYYMMDD } from "@/lib/dateUtils";
+import { computeTimelineForSubmit } from "@/lib/timelineUpdate";
 import { STATUSES, SOURCES } from "@/lib/constants";
 import type { JobApplication, AppFormData } from "@/lib/types";
 import type { AssembleResult } from "@/components/tabs/TailorTab";
@@ -556,37 +557,14 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     dupConfirmedRef.current = false;
     setDupWarning(null);
 
-    const now = Date.now();
-    // Status Date lets the user backdate a status change (e.g. "I was actually
-    // rejected 2 days ago, just logging it now") instead of always stamping
-    // "today". Anchored at noon to sidestep any UTC/local day-boundary shift.
-    const statusTs = formData.statusDate ? new Date(`${formData.statusDate}T12:00:00`).getTime() : now;
-
-    let updatedTimeline: any[];
-    let lastUpdatedTs: number;
-    if (editId) {
-      const existing = apps.find((a) => a.id === editId);
-      const prevTl = existing?.timeline ?? [];
-      const lastEntry = prevTl[prevTl.length - 1];
-      const statusChanged = lastEntry?.status !== formData.status;
-      // Same status, but the Status Date was edited to a different day —
-      // correct that entry's date in place instead of appending a duplicate.
-      const dateCorrected = !statusChanged && lastEntry && tsToYYYYMMDD(lastEntry.ts) !== formData.statusDate;
-
-      if (statusChanged) {
-        updatedTimeline = [...prevTl, { status: formData.status, ts: statusTs }];
-        lastUpdatedTs = statusTs;
-      } else if (dateCorrected) {
-        updatedTimeline = [...prevTl.slice(0, -1), { ...lastEntry, ts: statusTs }];
-        lastUpdatedTs = statusTs;
-      } else {
-        updatedTimeline = prevTl;
-        lastUpdatedTs = now;
-      }
-    } else {
-      updatedTimeline = [{ status: formData.status || "Applied", ts: statusTs }];
-      lastUpdatedTs = statusTs;
-    }
+    const existing = editId ? apps.find((a) => a.id === editId) : undefined;
+    const { timeline: updatedTimeline, lastUpdatedTs } = computeTimelineForSubmit({
+      isEdit: !!editId,
+      existingTimeline: existing?.timeline,
+      formStatus: formData.status,
+      formStatusDate: formData.statusDate,
+      now: Date.now(),
+    });
 
     const payload = {
       company: formData.company, position: formData.position, location: formData.location,
