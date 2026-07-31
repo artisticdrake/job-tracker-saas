@@ -376,9 +376,12 @@ app.put('/applications/:id', requireAuth, async (req, res) => {
   const payload = req.body;
   const authClient = getAuthClient(req.headers.authorization as string);
 
+  // The client computes last_updated itself (e.g. backdated to match a
+  // corrected Status Date) — respect it if sent, only default to "now" when
+  // it isn't, instead of unconditionally clobbering it on every edit.
   const { data, error } = await authClient
     .from('applications')
-    .update({ ...payload, last_updated: new Date().toISOString() })
+    .update({ ...payload, last_updated: payload.last_updated ?? new Date().toISOString() })
     .eq('id', id)
     .eq('user_id', userId)
     .select()

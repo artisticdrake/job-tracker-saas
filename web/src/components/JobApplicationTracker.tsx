@@ -528,13 +528,17 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     const app = apps.find((a) => a.id === appId);
     if (!app || app.timeline.length <= 1) return;
     const newTimeline = app.timeline.filter((_, i) => i !== entryIndex);
-    const newStatus = newTimeline[newTimeline.length - 1].status;
+    const newLastEntry = newTimeline[newTimeline.length - 1];
+    const newStatus = newLastEntry.status;
 
     try {
       const res = await fetch(`${API}/applications/${appId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({ timeline: newTimeline, status: newStatus }),
+        body: JSON.stringify({
+          timeline: newTimeline, status: newStatus,
+          last_updated: new Date(newLastEntry.ts).toISOString(),
+        }),
       });
       if (!res.ok) throw new Error(`Failed (${res.status})`);
       await fetchApps();
