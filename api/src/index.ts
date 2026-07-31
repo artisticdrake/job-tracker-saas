@@ -425,7 +425,7 @@ app.post('/applications/auto-ghost', requireAuth, async (req, res) => {
   // but we filter by user_id so data is still scoped correctly).
   const { data: stale, error: fetchErr } = await supabase
     .from('applications')
-    .select('id, timeline, notes')
+    .select('id, timeline, notes, date_applied')
     .eq('user_id', userId)
     .not('status', 'in', `(${TERMINAL.join(',')})`)
     .lt('last_updated', cutoff);
@@ -433,21 +433,25 @@ app.post('/applications/auto-ghost', requireAuth, async (req, res) => {
   if (fetchErr) return res.status(400).json({ success: false, error: fetchErr.message });
   if (!stale || stale.length === 0) return res.json({ success: true, ghosted: 0 });
 
-  const now = new Date().toISOString();
   const nowTs = Date.now();
 
-  // Update each stale application: append a Ghosted timeline entry and leave a
-  // note explaining why, so it's clear later that this wasn't a manual change.
+  // Update each stale application: append a Ghosted timeline entry dated exactly
+  // 18 days after it was applied to (not "whenever this check happened to run" —
+  // this endpoint only fires once per session, so that could be weeks late),
+  // clamped to not land in the future, plus a note explaining why.
   const updates = stale.map((app: any) => {
     const prevTimeline = Array.isArray(app.timeline) ? app.timeline : [];
-    const autoNote = `[Auto-ghosted ${now.slice(0, 10)}] No activity for 18+ days.`;
+    const appliedTs = app.date_applied ? new Date(`${app.date_applied}T12:00:00`).getTime() : nowTs;
+    const ghostTs = Math.min(appliedTs + STALE_THRESHOLD_MS, nowTs);
+    const ghostIso = new Date(ghostTs).toISOString();
+    const autoNote = `[Auto-ghosted ${ghostIso.slice(0, 10)}] No activity for 18+ days.`;
     const newNotes = app.notes ? `${app.notes}\n${autoNote}` : autoNote;
     return supabase
       .from('applications')
       .update({
         status: 'Ghosted',
-        last_updated: now,
-        timeline: [...prevTimeline, { status: 'Ghosted', ts: nowTs, auto: true }],
+        last_updated: ghostIso,
+        timeline: [...prevTimeline, { status: 'Ghosted', ts: ghostTs, auto: true }],
         notes: newNotes,
       })
       .eq('id', app.id)
