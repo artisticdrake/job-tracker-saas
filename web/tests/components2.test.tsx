@@ -135,7 +135,8 @@ describe('AnalyticsTab', () => {
 
   it('renders KPI labels without crashing', () => {
     render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} />);
-    expect(screen.getByText(/Response Rate/i)).toBeInTheDocument();
+    // The metric ticker renders each card twice (seamless scroll loop), so expect >=1.
+    expect(screen.getAllByText(/Response Rate/i).length).toBeGreaterThan(0);
   });
 });
 

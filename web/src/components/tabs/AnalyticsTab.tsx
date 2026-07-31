@@ -9,10 +9,20 @@ import { cn } from "@/lib/utils";
 import { useCountUp } from "@/lib/useCountUp";
 
 /* ── Palette ─────────────────────────────────────────────────────────────── */
-const CHART_COLORS = [
-  "#41e4c0", "#b9c7e4", "#bcc6e5", "#5ffbd6",
-  "#74829d", "#38debb", "#d8e2ff", "#253453",
-];
+// Semantic per-status color — not an arbitrary cycling palette, so a red
+// "Rejected" slice always reads as bad news and a green "Offer" slice always
+// reads as good news, matching the meaning of the status rather than its position.
+const STATUS_COLORS: Record<string, string> = {
+  Applied:               "#60a5fa", // blue
+  Screening:             "#fbbf24", // yellow
+  "Interview Scheduled": "#41e4c0", // teal
+  "Interview Completed": "#2dd4bf", // teal (deeper)
+  Offer:                 "#34d399", // green
+  Rejected:              "#f87171", // red
+  Ghosted:               "#a1a1aa", // gray
+  Withdrawn:             "#94a3b8", // slate
+};
+const FALLBACK_COLOR = "#8890a8";
 
 const TOOLTIP_STYLE: React.CSSProperties = {
   background: "rgba(37, 52, 83, 0.9)",
@@ -67,8 +77,9 @@ const METRIC_CONFIG = [
 ];
 
 /* ── Metric Card (with count-up) ─────────────────────────────────────────── */
-function MetricCard({ cfg, raw, index }: { cfg: typeof METRIC_CONFIG[0]; raw: string | number | null; index: number }) {
-  const STAGGER = ["stagger-1","stagger-2","stagger-3","stagger-4","stagger-5","stagger-6"];
+// Fixed width, not a grid cell — this card lives in the auto-scrolling ticker
+// below, so it always gets its full natural size and never clips its number.
+function MetricCard({ cfg, raw }: { cfg: typeof METRIC_CONFIG[0]; raw: string | number | null }) {
   const numericVal = typeof raw === "number" ? raw : parseFloat(String(raw ?? 0)) || 0;
   const animated = useCountUp(Math.round(numericVal), 800);
   const Icon = cfg.icon;
@@ -87,22 +98,19 @@ function MetricCard({ cfg, raw, index }: { cfg: typeof METRIC_CONFIG[0]; raw: st
   }
 
   return (
-    <div className={cn(
-      "group relative overflow-hidden rounded-xl border border-white/[0.06] tonal-lift p-5 transition-all duration-300 hover:border-white/[0.12] animate-slide-up",
-      STAGGER[index % STAGGER.length]
-    )}>
+    <div className="group/card relative w-[220px] shrink-0 overflow-hidden rounded-xl border border-white/[0.06] tonal-lift p-5 transition-all duration-300 hover:border-white/[0.12]">
       {/* Left accent notch on hover */}
-      <div className="absolute left-0 top-0 h-full w-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+      <div className="absolute left-0 top-0 h-full w-0.5 bg-primary opacity-0 group-hover/card:opacity-100 transition-opacity duration-300" />
       <div className="relative">
         <div className="flex items-center justify-between mb-3.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
+          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60 whitespace-nowrap">
             {cfg.label}
           </span>
-          <span className={cn("flex h-6 w-6 items-center justify-center rounded-md", cfg.iconBg)}>
+          <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-md", cfg.iconBg)}>
             <Icon className={cn("h-3 w-3", cfg.iconColor)} />
           </span>
         </div>
-        <p className={cn("text-3xl font-black tabular-nums leading-none tracking-tight number-pop", cfg.numColor)}>
+        <p className={cn("text-3xl font-black tabular-nums leading-none tracking-tight number-pop whitespace-nowrap", cfg.numColor)}>
           {display}
         </p>
       </div>
@@ -229,25 +237,30 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData, lo
   };
 
   const funnelData = [
-    { stage: "Applied",   count: stats.statusCounts["Applied"] ?? 0,   color: "#b9c7e4", bg: "#b9c7e4" },
-    { stage: "Screening", count: stats.statusCounts["Screening"] ?? 0, color: "#fbbf24", bg: "#fbbf24" },
+    { stage: "Applied",   count: stats.statusCounts["Applied"] ?? 0,   color: STATUS_COLORS.Applied,               bg: STATUS_COLORS.Applied },
+    { stage: "Screening", count: stats.statusCounts["Screening"] ?? 0, color: STATUS_COLORS.Screening,             bg: STATUS_COLORS.Screening },
     {
       stage: "Interview",
       count: (stats.statusCounts["Interview Scheduled"] ?? 0) + (stats.statusCounts["Interview Completed"] ?? 0),
-      color: "#5ffbd6", bg: "#5ffbd6",
+      color: STATUS_COLORS["Interview Scheduled"], bg: STATUS_COLORS["Interview Scheduled"],
     },
-    { stage: "Offer",     count: stats.statusCounts["Offer"] ?? 0,     color: "#41e4c0", bg: "#41e4c0" },
+    { stage: "Offer",     count: stats.statusCounts["Offer"] ?? 0,     color: STATUS_COLORS.Offer,                 bg: STATUS_COLORS.Offer },
   ];
   const funnelMax = funnelData[0]?.count || 1;
 
   return (
     <div className="space-y-5">
 
-      {/* ── Metric cards ───────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-3">
-        {METRIC_CONFIG.map((cfg, i) => (
-          <MetricCard key={cfg.key} cfg={cfg} raw={getRaw(cfg.key)} index={i} />
-        ))}
+      {/* ── Metric cards — auto-scrolling ticker, like a news crawl ─── */}
+      {/* The list is duplicated back-to-back so the loop point at -50% is seamless. */}
+      <div className="group relative overflow-hidden rounded-xl animate-fade-in">
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-background to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-background to-transparent" />
+        <div className="flex w-max gap-3 py-1 animate-marquee group-hover:[animation-play-state:paused]">
+          {[...METRIC_CONFIG, ...METRIC_CONFIG].map((cfg, i) => (
+            <MetricCard key={`${cfg.key}-${i}`} cfg={cfg} raw={getRaw(cfg.key)} />
+          ))}
+        </div>
       </div>
 
       {/* ── Applications per Month ─────────────────────────────────── */}
@@ -265,12 +278,15 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData, lo
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <defs>
-                    {CHART_COLORS.map((c, i) => (
-                      <radialGradient key={i} id={`pie-grad-${i}`} cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor={c} stopOpacity={1} />
-                        <stop offset="100%" stopColor={c} stopOpacity={0.7} />
-                      </radialGradient>
-                    ))}
+                    {pieData.map((d, i) => {
+                      const c = STATUS_COLORS[d.name as string] ?? FALLBACK_COLOR;
+                      return (
+                        <radialGradient key={i} id={`pie-grad-${i}`} cx="50%" cy="50%" r="50%">
+                          <stop offset="0%" stopColor={c} stopOpacity={1} />
+                          <stop offset="100%" stopColor={c} stopOpacity={0.7} />
+                        </radialGradient>
+                      );
+                    })}
                   </defs>
                   <Pie
                     data={pieData}
@@ -284,7 +300,7 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData, lo
                     labelLine={false}
                   >
                     {pieData.map((_, i) => (
-                      <Cell key={i} fill={`url(#pie-grad-${i % CHART_COLORS.length})`} stroke="transparent" />
+                      <Cell key={i} fill={`url(#pie-grad-${i})`} stroke="transparent" />
                     ))}
                   </Pie>
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
