@@ -100,10 +100,6 @@ export default {
           "50%":  { backgroundPosition: "100% 50%" },
           "100%": { backgroundPosition: "0% 50%"   },
         },
-        "marquee": {
-          "0%":   { transform: "translateX(0%)"   },
-          "100%": { transform: "translateX(-50%)" },
-        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -116,7 +112,6 @@ export default {
         "float":          "float 5s ease-in-out infinite",
         "number-pop":     "number-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both",
         "border-flow":    "border-flow 4s ease infinite",
-        "marquee":        "marquee 32s linear infinite",
       },
       backgroundImage: {
         "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",

@@ -1,10 +1,11 @@
+import { useEffect, useRef, useState } from "react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip,
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   BarChart, Bar, LabelList, ReferenceLine,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, Clock, Users, Award, Target, DollarSign, AlertTriangle } from "lucide-react";
+import { TrendingUp, Clock, Users, Award, Target, DollarSign, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCountUp } from "@/lib/useCountUp";
 
@@ -65,21 +66,33 @@ interface AnalyticsTabProps {
 
 /* ── Metric config ───────────────────────────────────────────────────────── */
 const METRIC_CONFIG = [
-  { key: "responseRate",        label: "Response Rate",      icon: TrendingUp,   iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    kind: "percent" },
-  { key: "avgDaysToAdvance",    label: "Avg. to Advance",    icon: TrendingUp,   iconBg: "bg-emerald-500/15",iconColor: "text-emerald-400", numColor: "text-emerald-600 dark:text-emerald-300", kind: "days" },
-  { key: "avgDaysToReject",     label: "Avg. to Reject",     icon: Clock,        iconBg: "bg-rose-500/15",   iconColor: "text-rose-400",    numColor: "text-rose-600 dark:text-rose-300", kind: "days" },
-  { key: "stalePipelineCount",  label: "Stuck >14d",         icon: AlertTriangle,iconBg: "bg-orange-500/15", iconColor: "text-orange-400",  numColor: "text-orange-600 dark:text-orange-300", kind: "count" },
-  { key: "screeningConversion", label: "Screening Rate",     icon: Users,        iconBg: "bg-primary/10",    iconColor: "text-primary",     numColor: "gradient-text-cyan", kind: "percent" },
-  { key: "interviewConversion", label: "Interview Rate",     icon: Target,       iconBg: "bg-amber-500/15",  iconColor: "text-amber-400",   numColor: "text-amber-600 dark:text-amber-300",   kind: "percent" },
-  { key: "offerConversion",     label: "Offer Rate",         icon: Award,        iconBg: "bg-emerald-500/15",iconColor: "text-emerald-400", numColor: "text-emerald-600 dark:text-emerald-300", kind: "percent" },
-  { key: "medianSalary",        label: "Median Offer",       icon: DollarSign,   iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    kind: "salary" },
-  { key: "medianTargetSalary",  label: "Median Target Pay",  icon: DollarSign,   iconBg: "bg-blue-500/15",   iconColor: "text-blue-400",    numColor: "text-blue-600 dark:text-blue-300", kind: "salary" },
+  { key: "responseRate",        label: "Response Rate",      icon: TrendingUp,   iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    kind: "percent",
+    description: "Share of applications that moved past Applied — any status change (even a rejection) counts as a response." },
+  { key: "avgDaysToAdvance",    label: "Avg. to Advance",    icon: TrendingUp,   iconBg: "bg-emerald-500/15",iconColor: "text-emerald-400", numColor: "text-emerald-600 dark:text-emerald-300", kind: "days",
+    description: "Average days between applying and the first positive move — Screening, Interview, or Offer." },
+  { key: "avgDaysToReject",     label: "Avg. to Reject",     icon: Clock,        iconBg: "bg-rose-500/15",   iconColor: "text-rose-400",    numColor: "text-rose-600 dark:text-rose-300", kind: "days",
+    description: "Average days between applying and being marked Rejected or Ghosted." },
+  { key: "stalePipelineCount",  label: "Stuck >14d",         icon: AlertTriangle,iconBg: "bg-orange-500/15", iconColor: "text-orange-400",  numColor: "text-orange-600 dark:text-orange-300", kind: "count",
+    description: "Applications still waiting on the employer (Applied, Screening, or Interview) with no status change in 14+ days." },
+  { key: "screeningConversion", label: "Screening Rate",     icon: Users,        iconBg: "bg-primary/10",    iconColor: "text-primary",     numColor: "gradient-text-cyan", kind: "percent",
+    description: "Of all applications, the share that were ever marked Screening." },
+  { key: "interviewConversion", label: "Interview Rate",     icon: Target,       iconBg: "bg-amber-500/15",  iconColor: "text-amber-400",   numColor: "text-amber-600 dark:text-amber-300",   kind: "percent",
+    description: "Of applications that reached Screening, the share that were ever marked Interview Scheduled or Interview Completed." },
+  { key: "offerConversion",     label: "Offer Rate",         icon: Award,        iconBg: "bg-emerald-500/15",iconColor: "text-emerald-400", numColor: "text-emerald-600 dark:text-emerald-300", kind: "percent",
+    description: "Of applications that reached Interview Completed, the share that were ever marked Offer." },
+  { key: "medianSalary",        label: "Median Offer",       icon: DollarSign,   iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    kind: "salary",
+    description: "Median annualized salary across your Offer-status applications with a usable salary figure." },
+  { key: "medianTargetSalary",  label: "Median Target Pay",  icon: DollarSign,   iconBg: "bg-blue-500/15",   iconColor: "text-blue-400",    numColor: "text-blue-600 dark:text-blue-300", kind: "salary",
+    description: "Median annualized salary across every application with a usable salary figure, not just offers." },
 ];
 
 /* ── Metric Card (with count-up) ─────────────────────────────────────────── */
-// Fixed width, not a grid cell — this card lives in the auto-scrolling ticker
+// Fixed width, not a grid cell — this card lives in the scrollable ticker
 // below, so it always gets its full natural size and never clips its number.
-function MetricCard({ cfg, raw }: { cfg: typeof METRIC_CONFIG[0]; raw: string | number | null }) {
+// Click toggles an inline explanation of what the metric actually measures.
+function MetricCard({ cfg, raw, active, onToggle }: {
+  cfg: typeof METRIC_CONFIG[0]; raw: string | number | null; active: boolean; onToggle: () => void;
+}) {
   const numericVal = typeof raw === "number" ? raw : parseFloat(String(raw ?? 0)) || 0;
   const animated = useCountUp(Math.round(numericVal), 800);
   const Icon = cfg.icon;
@@ -98,9 +111,21 @@ function MetricCard({ cfg, raw }: { cfg: typeof METRIC_CONFIG[0]; raw: string | 
   }
 
   return (
-    <div className="group/card relative w-[220px] shrink-0 overflow-hidden rounded-xl border border-white/[0.06] tonal-lift p-5 transition-all duration-300 hover:border-white/[0.12]">
-      {/* Left accent notch on hover */}
-      <div className="absolute left-0 top-0 h-full w-0.5 bg-primary opacity-0 group-hover/card:opacity-100 transition-opacity duration-300" />
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
+      className={cn(
+        "group/card relative w-[220px] shrink-0 cursor-pointer overflow-hidden rounded-xl border tonal-lift p-5 transition-all duration-300",
+        active ? "border-primary/40" : "border-white/[0.06] hover:border-white/[0.12]"
+      )}
+    >
+      {/* Left accent notch on hover/active */}
+      <div className={cn(
+        "absolute left-0 top-0 h-full w-0.5 bg-primary transition-opacity duration-300",
+        active ? "opacity-100" : "opacity-0 group-hover/card:opacity-100"
+      )} />
       <div className="relative">
         <div className="flex items-center justify-between mb-3.5">
           <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60 whitespace-nowrap">
@@ -113,6 +138,11 @@ function MetricCard({ cfg, raw }: { cfg: typeof METRIC_CONFIG[0]; raw: string | 
         <p className={cn("text-3xl font-black tabular-nums leading-none tracking-tight number-pop whitespace-nowrap", cfg.numColor)}>
           {display}
         </p>
+        {active && (
+          <p className="mt-3 pt-3 border-t border-white/[0.08] text-[11px] leading-relaxed text-muted-foreground/70 whitespace-normal">
+            {cfg.description}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -236,6 +266,22 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData, lo
     return (stats as unknown as Record<string, unknown>)[key] as string | number | null;
   };
 
+  // Click a metric card to see what it means; click elsewhere to dismiss.
+  const [activeMetric, setActiveMetric] = useState<string | null>(null);
+  const tickerRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!activeMetric) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (tickerRef.current && !tickerRef.current.contains(e.target as Node)) setActiveMetric(null);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [activeMetric]);
+
+  const scrollTicker = (dir: 1 | -1) => scrollerRef.current?.scrollBy({ left: dir * 240, behavior: "smooth" });
+
   const funnelData = [
     { stage: "Applied",   count: stats.statusCounts["Applied"] ?? 0,   color: STATUS_COLORS.Applied,               bg: STATUS_COLORS.Applied },
     { stage: "Screening", count: stats.statusCounts["Screening"] ?? 0, color: STATUS_COLORS.Screening,             bg: STATUS_COLORS.Screening },
@@ -251,14 +297,35 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData, lo
   return (
     <div className="space-y-5">
 
-      {/* ── Metric cards — auto-scrolling ticker, like a news crawl ─── */}
-      {/* The list is duplicated back-to-back so the loop point at -50% is seamless. */}
-      <div className="group relative overflow-hidden rounded-xl animate-fade-in">
+      {/* ── Metric cards — manually scrollable, click a card for details ── */}
+      <div ref={tickerRef} className="relative animate-fade-in">
         <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-background to-transparent" />
         <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-background to-transparent" />
-        <div className="flex w-max gap-3 py-1 animate-marquee group-hover:[animation-play-state:paused]">
-          {[...METRIC_CONFIG, ...METRIC_CONFIG].map((cfg, i) => (
-            <MetricCard key={`${cfg.key}-${i}`} cfg={cfg} raw={getRaw(cfg.key)} />
+        <button
+          type="button"
+          onClick={() => scrollTicker(-1)}
+          aria-label="Scroll metrics left"
+          className="absolute left-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-background/90 shadow-md transition-colors hover:bg-muted"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => scrollTicker(1)}
+          aria-label="Scroll metrics right"
+          className="absolute right-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-background/90 shadow-md transition-colors hover:bg-muted"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+        <div ref={scrollerRef} className="flex items-start gap-3 overflow-x-auto scroll-smooth px-10 py-1">
+          {METRIC_CONFIG.map((cfg) => (
+            <MetricCard
+              key={cfg.key}
+              cfg={cfg}
+              raw={getRaw(cfg.key)}
+              active={activeMetric === cfg.key}
+              onToggle={() => setActiveMetric((k) => (k === cfg.key ? null : cfg.key))}
+            />
           ))}
         </div>
       </div>

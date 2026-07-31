@@ -135,8 +135,18 @@ describe('AnalyticsTab', () => {
 
   it('renders KPI labels without crashing', () => {
     render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} />);
-    // The metric ticker renders each card twice (seamless scroll loop), so expect >=1.
     expect(screen.getAllByText(/Response Rate/i).length).toBeGreaterThan(0);
+  });
+
+  it('clicking a metric card reveals its description, clicking again hides it', async () => {
+    const user = userEvent.setup();
+    render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} />);
+    const card = screen.getByText(/Response Rate/i).closest('[role="button"]')!;
+    expect(screen.queryByText(/any status change/i)).not.toBeInTheDocument();
+    await user.click(card);
+    expect(screen.getByText(/any status change/i)).toBeInTheDocument();
+    await user.click(card);
+    expect(screen.queryByText(/any status change/i)).not.toBeInTheDocument();
   });
 });
 
