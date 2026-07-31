@@ -57,21 +57,22 @@ function calcAvgResponseTime(apps: JobApplication[]) {
   return times.length > 0 ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : null;
 }
 
-// Only true pipeline stages, in order. Rejected/Ghosted/Withdrawn are terminal
-// exits that can happen from any stage, not "later" stages in the funnel —
-// they must be excluded here or every dropped-out app looks like it reached Offer.
-const FUNNEL_ORDER = ["Applied", "Screening", "Interview Scheduled", "Interview Completed", "Offer"];
+// Only true pipeline stages. Rejected/Ghosted/Withdrawn are terminal exits that
+// can happen from any stage, not "later" stages in the funnel, so they're excluded.
+const FUNNEL_STAGES = ["Applied", "Screening", "Interview Scheduled", "Interview Completed", "Offer"];
 
-function highestFunnelIdx(app: JobApplication) {
+// A stage only counts as "reached" if it was literally logged on the timeline
+// (or is the current status) — never inferred from a later stage. Apps that
+// jump straight from Applied to Offer without ever being marked "Screening" or
+// "Interview Scheduled" must not be credited with having passed those stages.
+function reachedStages(app: JobApplication): Set<string> {
   const statuses = (app.timeline?.length ? app.timeline.map((t) => t.status) : []).concat(app.status);
-  return statuses.reduce((max, s) => Math.max(max, FUNNEL_ORDER.indexOf(s)), -1);
+  return new Set(statuses.filter((s) => FUNNEL_STAGES.includes(s)));
 }
 
 function calcConversionRate(apps: JobApplication[], from: string, to: string) {
-  const fromIdx = FUNNEL_ORDER.indexOf(from);
-  const toIdx = FUNNEL_ORDER.indexOf(to);
-  const reachedFrom = apps.filter((a) => highestFunnelIdx(a) >= fromIdx).length;
-  const reachedTo = apps.filter((a) => highestFunnelIdx(a) >= toIdx).length;
+  const reachedFrom = apps.filter((a) => reachedStages(a).has(from)).length;
+  const reachedTo = apps.filter((a) => reachedStages(a).has(to)).length;
   return reachedFrom > 0 ? ((reachedTo / reachedFrom) * 100).toFixed(1) : 0;
 }
 
