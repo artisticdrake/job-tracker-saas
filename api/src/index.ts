@@ -411,12 +411,12 @@ app.delete('/applications/:id', requireAuth, async (req, res) => {
 
 // POST: Auto-ghost stale applications
 // Marks any application (not already Ghosted/Rejected/Offer/Withdrawn) that hasn't
-// been updated in 90+ days as "Ghosted". Uses the service-role client so it can
+// been updated in 18+ days as "Ghosted". Uses the service-role client so it can
 // bulk-update all rows for the user in one query.
 app.post('/applications/auto-ghost', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
-  const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
-  const cutoff = new Date(Date.now() - NINETY_DAYS_MS).toISOString();
+  const STALE_THRESHOLD_MS = 18 * 24 * 60 * 60 * 1000;
+  const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
 
   // Terminal statuses that should never be auto-ghosted
   const TERMINAL = ['Ghosted', 'Rejected', 'Offer', 'Withdrawn'];

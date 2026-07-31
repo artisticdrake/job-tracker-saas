@@ -112,7 +112,7 @@ All routes require `Authorization: Bearer <supabase-jwt>` (validated by `require
 
 **Applications**
 - `GET /applications` · `POST /applications` · `PUT /applications/:id` · `DELETE /applications/:id`
-- `POST /applications/auto-ghost` — marks 90-day-stale, non-terminal apps as Ghosted
+- `POST /applications/auto-ghost` — marks 18-day-stale, non-terminal apps as Ghosted
 
 **Profile & account**
 - `GET/PUT/DELETE /profile` — DELETE is a full account wipe (all tables + storage + auth)
