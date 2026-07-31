@@ -787,7 +787,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
               <span className="text-base shrink-0">👻</span>
               <span>
                 <span className="font-semibold">{ghostNotice} application{ghostNotice > 1 ? "s" : ""}</span>
-                {" "}moved to <span className="font-semibold">Ghosted</span> — no activity for 90+ days.
+                {" "}moved to <span className="font-semibold">Ghosted</span> — no activity for 18+ days.
               </span>
               <button
                 className="ml-auto shrink-0 text-zinc-500 hover:text-zinc-300 transition-colors text-lg leading-none"

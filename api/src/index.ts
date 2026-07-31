@@ -425,7 +425,7 @@ app.post('/applications/auto-ghost', requireAuth, async (req, res) => {
   // but we filter by user_id so data is still scoped correctly).
   const { data: stale, error: fetchErr } = await supabase
     .from('applications')
-    .select('id, timeline')
+    .select('id, timeline, notes')
     .eq('user_id', userId)
     .not('status', 'in', `(${TERMINAL.join(',')})`)
     .lt('last_updated', cutoff);
@@ -436,15 +436,19 @@ app.post('/applications/auto-ghost', requireAuth, async (req, res) => {
   const now = new Date().toISOString();
   const nowTs = Date.now();
 
-  // Update each stale application: append a Ghosted timeline entry
+  // Update each stale application: append a Ghosted timeline entry and leave a
+  // note explaining why, so it's clear later that this wasn't a manual change.
   const updates = stale.map((app: any) => {
     const prevTimeline = Array.isArray(app.timeline) ? app.timeline : [];
+    const autoNote = `[Auto-ghosted ${now.slice(0, 10)}] No activity for 18+ days.`;
+    const newNotes = app.notes ? `${app.notes}\n${autoNote}` : autoNote;
     return supabase
       .from('applications')
       .update({
         status: 'Ghosted',
         last_updated: now,
         timeline: [...prevTimeline, { status: 'Ghosted', ts: nowTs, auto: true }],
+        notes: newNotes,
       })
       .eq('id', app.id)
       .eq('user_id', userId);
