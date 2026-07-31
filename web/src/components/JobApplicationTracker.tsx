@@ -176,7 +176,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [editId, setEditId] = useState<string | null>(null);
   const [formData, setFormData] = useState<AppFormData>({
     company: "", position: "", location: "", salary: "",
-    dateApplied: todayISO(), status: "Applied", jobUrl: "",
+    dateApplied: todayISO(), status: "Applied", statusDate: todayISO(), jobUrl: "",
     source: "LinkedIn", referral: "No", notes: "", jobDescription: "", documents: [],
   });
   const [dupWarning, setDupWarning] = useState<any>(null);
@@ -501,7 +501,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const handleLogout = () => supabase.auth.signOut();
 
   const resetForm = () => {
-    setFormData({ company: "", position: "", location: "", salary: "", dateApplied: todayISO(), status: "Applied", jobUrl: "", source: "LinkedIn", referral: "No", notes: "", jobDescription: "", documents: [] });
+    setFormData({ company: "", position: "", location: "", salary: "", dateApplied: todayISO(), status: "Applied", statusDate: todayISO(), jobUrl: "", source: "LinkedIn", referral: "No", notes: "", jobDescription: "", documents: [] });
     setShowForm(false);
     setEditId(null);
     setDupWarning(null);
@@ -509,7 +509,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   };
 
   const handleEdit = (app: JobApplication) => {
-    setFormData({ ...app, jobDescription: app.jobDescription ?? "", documents: app.documents ?? [] });
+    // Status Date always defaults to today — it's "when did this status change
+    // happen", not a stored field, so it only matters if the user overrides it.
+    setFormData({ ...app, statusDate: todayISO(), jobDescription: app.jobDescription ?? "", documents: app.documents ?? [] });
     setEditId(app.id);
     setExpandedApp(null);
     setShowForm(true);
@@ -552,14 +554,23 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     setDupWarning(null);
 
     const now = Date.now();
+    // Status Date lets the user backdate a status change (e.g. "I was actually
+    // rejected 2 days ago, just logging it now") instead of always stamping
+    // "today". Anchored at noon to sidestep any UTC/local day-boundary shift.
+    const statusTs = formData.statusDate ? new Date(`${formData.statusDate}T12:00:00`).getTime() : now;
+
     let updatedTimeline: any[];
+    let lastUpdatedTs: number;
     if (editId) {
       const existing = apps.find((a) => a.id === editId);
       const prevTl = existing?.timeline ?? [];
       const lastStatus = prevTl[prevTl.length - 1]?.status;
-      updatedTimeline = lastStatus !== formData.status ? [...prevTl, { status: formData.status, ts: now }] : prevTl;
+      const statusChanged = lastStatus !== formData.status;
+      updatedTimeline = statusChanged ? [...prevTl, { status: formData.status, ts: statusTs }] : prevTl;
+      lastUpdatedTs = statusChanged ? statusTs : now;
     } else {
-      updatedTimeline = [{ status: formData.status || "Applied", ts: now }];
+      updatedTimeline = [{ status: formData.status || "Applied", ts: statusTs }];
+      lastUpdatedTs = statusTs;
     }
 
     const payload = {
@@ -567,7 +578,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       salary: formData.salary, date_applied: formData.dateApplied, status: formData.status,
       job_url: formData.jobUrl, source: formData.source, referral: formData.referral ?? "No",
       notes: formData.notes, job_description: formData.jobDescription,
-      timeline: updatedTimeline, last_updated: new Date(now).toISOString(),
+      timeline: updatedTimeline, last_updated: new Date(lastUpdatedTs).toISOString(),
     };
 
     try {

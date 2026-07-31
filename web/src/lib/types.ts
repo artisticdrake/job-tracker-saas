@@ -52,6 +52,7 @@ export interface AppFormData {
   salary: string;
   dateApplied: string;
   status: string;
+  statusDate: string;
   jobUrl: string;
   source: string;
   referral: string;

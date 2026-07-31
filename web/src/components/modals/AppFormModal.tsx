@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { STATUSES, SOURCES } from "@/lib/constants";
+import { todayISO } from "@/lib/dateUtils";
 import type { AppFormData } from "@/lib/types";
 
 interface AppFormModalProps {
@@ -132,12 +133,20 @@ export default function AppFormModal({
               </div>
               <div className="space-y-1.5">
                 <Label className={labelCls}>Status <span className="text-destructive">*</span></Label>
-                <Select value={formData.status} onValueChange={(v) => setFormData((p) => ({ ...p, status: v }))}>
+                <Select
+                  value={formData.status}
+                  onValueChange={(v) => setFormData((p) => ({ ...p, status: v, statusDate: todayISO() }))}
+                >
                   <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
                   <SelectContent className="border-white/[0.08] bg-popover">
                     {STATUSES.map((s) => <SelectItem key={s} value={s} className="text-[13px]">{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className={labelCls}>Status Date</Label>
+                <Input type="date" required {...field("statusDate")} className={inputCls} />
+                <p className="text-[11px] text-muted-foreground/50">When did this status actually happen?</p>
               </div>
               <div className="space-y-1.5">
                 <Label className={labelCls}>Source</Label>
