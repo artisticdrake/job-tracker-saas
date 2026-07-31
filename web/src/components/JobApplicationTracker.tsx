@@ -515,6 +515,29 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     setShowForm(true);
   };
 
+  // Corrects a mis-click (e.g. hit "Offer" by accident) without going through
+  // the full edit form. Removing the current (most recent) entry rolls the
+  // application's status back to whatever it was before that entry.
+  const handleDeleteTimelineEntry = async (appId: string, entryIndex: number) => {
+    const app = apps.find((a) => a.id === appId);
+    if (!app || app.timeline.length <= 1) return;
+    const newTimeline = app.timeline.filter((_, i) => i !== entryIndex);
+    const newStatus = newTimeline[newTimeline.length - 1].status;
+
+    try {
+      const res = await fetch(`${API}/applications/${appId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ timeline: newTimeline, status: newStatus }),
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      await fetchApps();
+      setExpandedApp((prev) => (prev && prev.id === appId ? { ...prev, timeline: newTimeline, status: newStatus as JobApplication["status"] } : prev));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editId && !dupConfirmedRef.current) {
@@ -872,6 +895,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         app={expandedApp}
         onClose={() => setExpandedApp(null)}
         onEdit={handleEdit}
+        onDeleteTimelineEntry={handleDeleteTimelineEntry}
       />
 
       <DeleteConfirmDialog

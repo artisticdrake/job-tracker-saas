@@ -1,4 +1,4 @@
-import { ExternalLink, Edit2, Clock, MapPin, DollarSign, Calendar } from "lucide-react";
+import { ExternalLink, Edit2, Clock, MapPin, DollarSign, Calendar, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -13,6 +13,7 @@ interface AppDetailModalProps {
   app: JobApplication | null;
   onClose: () => void;
   onEdit: (app: JobApplication) => void;
+  onDeleteTimelineEntry?: (appId: string, entryIndex: number) => void;
 }
 
 const AVATAR_PALETTES = [
@@ -38,7 +39,7 @@ function CompanyAvatar({ company }: { company: string }) {
   );
 }
 
-export default function AppDetailModal({ app, onClose, onEdit }: AppDetailModalProps) {
+export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineEntry }: AppDetailModalProps) {
   if (!app) return null;
   const cfg = STATUS_CONFIG[app.status] ?? STATUS_CONFIG["Applied"];
 
@@ -80,7 +81,7 @@ export default function AppDetailModal({ app, onClose, onEdit }: AppDetailModalP
           </div>
         </DialogHeader>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="px-6 py-5 space-y-5">
 
             {/* Info grid */}
@@ -134,12 +135,18 @@ export default function AppDetailModal({ app, onClose, onEdit }: AppDetailModalP
               <>
                 <div className="h-px bg-white/[0.06]" />
                 <div>
-                  <h4 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground/50 mb-4">Timeline</h4>
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground/50">Timeline</h4>
+                    {onDeleteTimelineEntry && app.timeline.length > 1 && (
+                      <span className="text-[10px] text-muted-foreground/40">Hover an entry to remove it</span>
+                    )}
+                  </div>
                   <div className="space-y-0">
                     {[...app.timeline].reverse().map((entry, i, arr) => {
                       const c2 = STATUS_CONFIG[entry.status];
+                      const originalIndex = arr.length - 1 - i;
                       return (
-                        <div key={i} className="flex gap-3">
+                        <div key={i} className="group/entry flex gap-3">
                           <div className="flex flex-col items-center">
                             <div className={cn(
                               "mt-1 h-2.5 w-2.5 rounded-full shrink-0 ring-2 ring-background",
@@ -149,7 +156,19 @@ export default function AppDetailModal({ app, onClose, onEdit }: AppDetailModalP
                           </div>
                           <div className="flex items-baseline justify-between flex-1 pb-3 min-w-0 gap-2">
                             <span className="text-[13px] font-medium text-foreground/70">{entry.status}</span>
-                            <span className="text-[11px] tabular-nums text-muted-foreground/40 shrink-0">{formatShortDate(entry.ts)}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[11px] tabular-nums text-muted-foreground/40">{formatShortDate(entry.ts)}</span>
+                              {onDeleteTimelineEntry && app.timeline.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteTimelineEntry(app.id, originalIndex)}
+                                  className="opacity-0 group-hover/entry:opacity-100 flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                                  title="Remove this timeline entry"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
