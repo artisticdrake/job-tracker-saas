@@ -57,11 +57,21 @@ function calcAvgResponseTime(apps: JobApplication[]) {
   return times.length > 0 ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : null;
 }
 
+// Only true pipeline stages, in order. Rejected/Ghosted/Withdrawn are terminal
+// exits that can happen from any stage, not "later" stages in the funnel —
+// they must be excluded here or every dropped-out app looks like it reached Offer.
+const FUNNEL_ORDER = ["Applied", "Screening", "Interview Scheduled", "Interview Completed", "Offer"];
+
+function highestFunnelIdx(app: JobApplication) {
+  const statuses = (app.timeline?.length ? app.timeline.map((t) => t.status) : []).concat(app.status);
+  return statuses.reduce((max, s) => Math.max(max, FUNNEL_ORDER.indexOf(s)), -1);
+}
+
 function calcConversionRate(apps: JobApplication[], from: string, to: string) {
-  const fromIdx = STATUSES.indexOf(from as any);
-  const toIdx = STATUSES.indexOf(to as any);
-  const reachedFrom = apps.filter((a) => STATUSES.indexOf(a.status as any) >= fromIdx).length;
-  const reachedTo = apps.filter((a) => STATUSES.indexOf(a.status as any) >= toIdx).length;
+  const fromIdx = FUNNEL_ORDER.indexOf(from);
+  const toIdx = FUNNEL_ORDER.indexOf(to);
+  const reachedFrom = apps.filter((a) => highestFunnelIdx(a) >= fromIdx).length;
+  const reachedTo = apps.filter((a) => highestFunnelIdx(a) >= toIdx).length;
   return reachedFrom > 0 ? ((reachedTo / reachedFrom) * 100).toFixed(1) : 0;
 }
 
