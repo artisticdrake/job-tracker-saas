@@ -1242,6 +1242,24 @@ app.get('/cover-letter', requireAuth, async (req, res) => {
   return res.json({ success: true, id: data?.id ?? null, coverLetter: data?.cover_letter ?? null, footer: data?.footer ?? null });
 });
 
+// GET /cover-letters/application-ids — the set of this user's application ids that
+// have a saved cover letter. Used by Analytics to compare outcomes with vs. without
+// a cover letter attached; a lightweight id list is all that view needs.
+app.get('/cover-letters/application-ids', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const authClient = getAuthClient(req.headers.authorization as string);
+
+  const { data, error } = await authClient
+    .from('cover_letters')
+    .select('application_id')
+    .eq('user_id', userId)
+    .not('application_id', 'is', null);
+
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  const applicationIds = [...new Set((data ?? []).map((r: any) => r.application_id as string))];
+  return res.json({ success: true, applicationIds });
+});
+
 // PATCH /cover-letter/:id — durably save a user edit to a cover letter.
 // Body: { coverLetter?: string, footer?: string } — updates whichever is provided.
 // Editing the letter body flags the row edited so a later regenerate knows the

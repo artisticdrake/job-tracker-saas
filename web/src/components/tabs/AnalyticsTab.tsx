@@ -4,7 +4,7 @@ import {
   BarChart, Bar, LabelList, ReferenceLine,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, Clock, Users, Award, Target, DollarSign } from "lucide-react";
+import { TrendingUp, Clock, Users, Award, Target, DollarSign, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCountUp } from "@/lib/useCountUp";
 
@@ -32,8 +32,11 @@ interface AnalyticsStats {
   sourceCounts: Record<string, number>;
   weeks: { week: string; count: number | unknown }[];
   medianSalary: number | null;
+  medianTargetSalary: number | null;
   responseRate: string | number;
-  avgResponseTime: string | null;
+  avgDaysToReject: string | null;
+  avgDaysToAdvance: string | null;
+  stalePipelineCount: number;
   screeningConversion: string | number;
   interviewConversion: string | number;
   offerConversion: string | number;
@@ -44,16 +47,23 @@ interface AnalyticsTabProps {
   pieData: { name: string; value: unknown }[];
   sourceData: { name: string; value: unknown }[];
   monthData: { month: string; count: number }[];
+  locationData: { name: string; value: number }[];
+  repeatCompanies: { company: string; count: number }[];
+  salaryBuckets: { name: string; value: number }[];
+  coverLetterImpact: { label: string; count: number; responseRate: number | null }[];
 }
 
 /* ── Metric config ───────────────────────────────────────────────────────── */
 const METRIC_CONFIG = [
-  { key: "responseRate",        label: "Response Rate",      suffix: "%",  icon: TrendingUp, iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    isSalary: false },
-  { key: "avgResponseTime",     label: "Avg Response",       suffix: "d",  icon: Clock,      iconBg: "bg-blue-500/15",   iconColor: "text-blue-400",    numColor: "text-blue-600 dark:text-blue-300",    isSalary: false },
-  { key: "screeningConversion", label: "Screening Rate",     suffix: "%",  icon: Users,      iconBg: "bg-primary/10",    iconColor: "text-primary",     numColor: "gradient-text-cyan", isSalary: false },
-  { key: "interviewConversion", label: "Interview Rate",     suffix: "%",  icon: Target,     iconBg: "bg-amber-500/15",  iconColor: "text-amber-400",   numColor: "text-amber-600 dark:text-amber-300",   isSalary: false },
-  { key: "offerConversion",     label: "Offer Rate",         suffix: "%",  icon: Award,      iconBg: "bg-emerald-500/15",iconColor: "text-emerald-400", numColor: "text-emerald-600 dark:text-emerald-300", isSalary: false },
-  { key: "medianSalary",        label: "Median Offer",       suffix: "",   icon: DollarSign, iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    isSalary: true  },
+  { key: "responseRate",        label: "Response Rate",      icon: TrendingUp,   iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    kind: "percent" },
+  { key: "avgDaysToAdvance",    label: "Avg. to Advance",    icon: TrendingUp,   iconBg: "bg-emerald-500/15",iconColor: "text-emerald-400", numColor: "text-emerald-600 dark:text-emerald-300", kind: "days" },
+  { key: "avgDaysToReject",     label: "Avg. to Reject",     icon: Clock,        iconBg: "bg-rose-500/15",   iconColor: "text-rose-400",    numColor: "text-rose-600 dark:text-rose-300", kind: "days" },
+  { key: "stalePipelineCount",  label: "Stuck >14d",         icon: AlertTriangle,iconBg: "bg-orange-500/15", iconColor: "text-orange-400",  numColor: "text-orange-600 dark:text-orange-300", kind: "count" },
+  { key: "screeningConversion", label: "Screening Rate",     icon: Users,        iconBg: "bg-primary/10",    iconColor: "text-primary",     numColor: "gradient-text-cyan", kind: "percent" },
+  { key: "interviewConversion", label: "Interview Rate",     icon: Target,       iconBg: "bg-amber-500/15",  iconColor: "text-amber-400",   numColor: "text-amber-600 dark:text-amber-300",   kind: "percent" },
+  { key: "offerConversion",     label: "Offer Rate",         icon: Award,        iconBg: "bg-emerald-500/15",iconColor: "text-emerald-400", numColor: "text-emerald-600 dark:text-emerald-300", kind: "percent" },
+  { key: "medianSalary",        label: "Median Offer",       icon: DollarSign,   iconBg: "bg-primary/15",    iconColor: "text-primary",     numColor: "gradient-text",    kind: "salary" },
+  { key: "medianTargetSalary",  label: "Median Target Pay",  icon: DollarSign,   iconBg: "bg-blue-500/15",   iconColor: "text-blue-400",    numColor: "text-blue-600 dark:text-blue-300", kind: "salary" },
 ];
 
 /* ── Metric Card (with count-up) ─────────────────────────────────────────── */
@@ -66,10 +76,12 @@ function MetricCard({ cfg, raw, index }: { cfg: typeof METRIC_CONFIG[0]; raw: st
   let display: string;
   if (raw == null || raw === "—") {
     display = "—";
-  } else if (cfg.isSalary) {
+  } else if (cfg.kind === "salary") {
     display = `$${Math.round(numericVal).toLocaleString()}`;
-  } else if (cfg.key === "avgResponseTime" && raw != null) {
+  } else if (cfg.kind === "days") {
     display = `${animated}d`;
+  } else if (cfg.kind === "count") {
+    display = `${animated}`;
   } else {
     display = `${animated}%`;
   }
@@ -77,7 +89,7 @@ function MetricCard({ cfg, raw, index }: { cfg: typeof METRIC_CONFIG[0]; raw: st
   return (
     <div className={cn(
       "group relative overflow-hidden rounded-xl border border-white/[0.06] tonal-lift p-5 transition-all duration-300 hover:border-white/[0.12] animate-slide-up",
-      STAGGER[index]
+      STAGGER[index % STAGGER.length]
     )}>
       {/* Left accent notch on hover */}
       <div className="absolute left-0 top-0 h-full w-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
@@ -207,10 +219,12 @@ function MonthlyChart({ data }: { data: { month: string; count: number }[] }) {
 }
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
-export default function AnalyticsTab({ stats, pieData, sourceData, monthData }: AnalyticsTabProps) {
+export default function AnalyticsTab({ stats, pieData, sourceData, monthData, locationData, repeatCompanies, salaryBuckets, coverLetterImpact }: AnalyticsTabProps) {
   const getRaw = (key: string): string | number | null => {
     if (key === "medianSalary") return stats.medianSalary;
-    if (key === "avgResponseTime") return stats.avgResponseTime ? parseFloat(stats.avgResponseTime) : null;
+    if (key === "medianTargetSalary") return stats.medianTargetSalary;
+    if (key === "avgDaysToReject") return stats.avgDaysToReject ? parseFloat(stats.avgDaysToReject) : null;
+    if (key === "avgDaysToAdvance") return stats.avgDaysToAdvance ? parseFloat(stats.avgDaysToAdvance) : null;
     return (stats as unknown as Record<string, unknown>)[key] as string | number | null;
   };
 
@@ -230,7 +244,7 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData }: 
     <div className="space-y-5">
 
       {/* ── Metric cards ───────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-3">
         {METRIC_CONFIG.map((cfg, i) => (
           <MetricCard key={cfg.key} cfg={cfg} raw={getRaw(cfg.key)} index={i} />
         ))}
@@ -303,8 +317,31 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData }: 
           )}
         </ChartCard>
 
+        {/* Top Locations */}
+        <ChartCard title="Top Locations" delay="stagger-3">
+          {locationData.length === 0 ? <EmptyChart label="location" /> : (
+            <div className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={locationData} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                  <defs>
+                    <linearGradient id="locBarGrad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%"   stopColor="#38debb" stopOpacity={0.6} />
+                      <stop offset="100%" stopColor="#41e4c0" stopOpacity={1}   />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.04)" horizontal={false} />
+                  <XAxis type="number" tick={TICK_STYLE} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" tick={{ ...TICK_STYLE, fontSize: 10 }} tickLine={false} axisLine={false} width={100} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                  <Bar dataKey="value" fill="url(#locBarGrad)" radius={[0, 6, 6, 0]} barSize={14} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </ChartCard>
+
         {/* Application Trend */}
-        <ChartCard title="Application Trend" delay="stagger-3">
+        <ChartCard title="Application Trend" delay="stagger-4">
           {stats.weeks.length === 0 ? <EmptyChart label="trend" /> : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -333,7 +370,7 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData }: 
         </ChartCard>
 
         {/* Application Funnel */}
-        <ChartCard title="Application Funnel" delay="stagger-4">
+        <ChartCard title="Application Funnel" delay="stagger-5">
           <div className="space-y-4 pt-2">
             {funnelData.map(({ stage, count, color, bg }) => {
               const pct = Math.round((count / (funnelMax as number)) * 100);
@@ -356,6 +393,69 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData }: 
               );
             })}
           </div>
+        </ChartCard>
+
+        {/* Repeat Companies */}
+        <ChartCard title="Companies You've Applied to Multiple Times" delay="stagger-6">
+          {repeatCompanies.length === 0 ? <EmptyChart label="repeat company" /> : (
+            <div className="space-y-3 pt-1">
+              {repeatCompanies.slice(0, 6).map(({ company, count }) => (
+                <div key={company} className="flex items-center justify-between gap-3">
+                  <span className="text-[12px] font-medium text-muted-foreground truncate">{company}</span>
+                  <span className="text-[12px] font-bold tabular-nums text-primary shrink-0">{count}×</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </ChartCard>
+
+        {/* Salary Range Applied For */}
+        <ChartCard title="Salary Range Applied For (Annualized)" delay="stagger-1">
+          {salaryBuckets.length === 0 ? <EmptyChart label="salary" /> : (
+            <div className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={salaryBuckets} margin={{ top: 4, right: 4, bottom: 4, left: -24 }}>
+                  <defs>
+                    <linearGradient id="salaryBarGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor="#41e4c0" stopOpacity={1}   />
+                      <stop offset="100%" stopColor="#38debb" stopOpacity={0.7} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                  <XAxis dataKey="name" tick={{ ...TICK_STYLE, fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "rgba(255,255,255,0.04)" }} formatter={(v: number) => [v, "Applications"]} />
+                  <Bar dataKey="value" fill="url(#salaryBarGrad)" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </ChartCard>
+
+        {/* Cover Letter Impact */}
+        <ChartCard title="Cover Letter Impact" delay="stagger-2">
+          {coverLetterImpact.every((c) => c.count === 0) ? <EmptyChart label="cover letter" /> : (
+            <div className="space-y-4 pt-2">
+              {coverLetterImpact.map(({ label, count, responseRate }) => (
+                <div key={label} className="space-y-2">
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-[12px] font-medium text-muted-foreground">
+                      {label} <span className="text-muted-foreground/40">({count})</span>
+                    </span>
+                    <span className="text-[13px] font-bold tabular-nums text-primary">
+                      {responseRate === null ? "—" : `${responseRate}%`}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.05]">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-700"
+                      style={{ width: `${responseRate ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </ChartCard>
 
       </div>

@@ -45,16 +45,76 @@ function calcResponseRate(apps: JobApplication[]) {
   return apps.length > 0 ? ((responded / apps.length) * 100).toFixed(1) : 0;
 }
 
-function calcAvgResponseTime(apps: JobApplication[]) {
-  const times = apps
-    .filter((a) => a.timeline && a.timeline.length > 1)
-    .map((a) => {
-      const applied = a.timeline[0]?.ts;
-      const responded = a.timeline.find((t) => t.status !== "Application created")?.ts;
-      return responded && applied ? (responded - applied) / (1000 * 60 * 60 * 24) : null;
-    })
-    .filter((t): t is number => t !== null);
-  return times.length > 0 ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : null;
+// Salary is free text pulled from all over the web ("$40/hr", "$100-140K/yr",
+// "110,500.00 - 160,000.00 USD annually", plain "100,000", ...). This normalizes
+// every shape we've actually seen into one annualized number, or null if there's
+// nothing usable (blank, unparseable, or a plainly broken value like "$120/yr").
+const SALARY_MIN_ANNUAL = 10_000;
+const SALARY_MAX_ANNUAL = 1_000_000;
+const HOURS_PER_YEAR = 2080; // 40hr/week * 52 weeks, the standard full-time convention
+
+function parseSalaryToAnnual(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const s = String(raw).trim().replace(/[‒–—―−]/g, "-"); // en/em dash -> hyphen
+  if (!s) return null;
+  const lower = s.toLowerCase();
+
+  const isHourly = /\/\s*hr\b|\bhour(ly)?\b/.test(lower);
+  const hasK = /\d\s*k\b/i.test(lower);
+
+  const tokenRe = /(\d[\d,]*(?:\.\d+)?)\s*(k)?/gi;
+  const numbers: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = tokenRe.exec(s)) !== null) {
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    if (!Number.isFinite(n) || n <= 0) continue;
+    numbers.push(m[2] ? n * 1000 : n);
+  }
+  if (numbers.length === 0) return null;
+
+  // "$100-140K/yr" — the K often only trails the last number but scales the whole range.
+  const scaled = numbers.map((n) => (hasK && n < 1000 ? n * 1000 : n));
+  const nums = scaled.slice(0, 2); // a range has at most two bounds; ignore stray digits
+  const mid = nums.reduce((a, b) => a + b, 0) / nums.length;
+
+  const annual = isHourly ? mid * HOURS_PER_YEAR : mid;
+  if (!Number.isFinite(annual) || annual < SALARY_MIN_ANNUAL || annual > SALARY_MAX_ANNUAL) return null;
+  return annual;
+}
+
+// Splits "time to hear back" into a rejection bucket and an advance bucket —
+// a single blended average hides whether slow responses are good or bad news.
+// Withdrawn is excluded: it's the applicant's own action, not signal from the employer.
+const RESPONSE_REJECT_STATUSES = new Set(["Rejected", "Ghosted"]);
+const RESPONSE_ADVANCE_STATUSES = new Set(["Screening", "Interview Scheduled", "Interview Completed", "Offer"]);
+
+function calcResponseTimeSplit(apps: JobApplication[]) {
+  const toReject: number[] = [];
+  const toAdvance: number[] = [];
+  apps.forEach((a) => {
+    if (!a.timeline || a.timeline.length < 2) return;
+    const appliedTs = a.timeline[0]?.ts;
+    const firstMove = a.timeline[1]; // first real status change after creation
+    if (!appliedTs || !firstMove) return;
+    const days = (firstMove.ts - appliedTs) / (1000 * 60 * 60 * 24);
+    if (RESPONSE_REJECT_STATUSES.has(firstMove.status)) toReject.push(days);
+    else if (RESPONSE_ADVANCE_STATUSES.has(firstMove.status)) toAdvance.push(days);
+  });
+  const avg = (arr: number[]) => (arr.length ? (arr.reduce((s, v) => s + v, 0) / arr.length).toFixed(1) : null);
+  return { avgDaysToReject: avg(toReject), avgDaysToAdvance: avg(toAdvance) };
+}
+
+// Applications still waiting on the employer (not yet Offer/Rejected/Ghosted/Withdrawn)
+// that haven't moved in a while — surfaces what needs a follow-up nudge.
+const STALE_WAITING_STATUSES = new Set(["Applied", "Screening", "Interview Scheduled", "Interview Completed"]);
+const STALE_DAYS_THRESHOLD = 14;
+
+function calcStalePipelineCount(apps: JobApplication[]) {
+  const now = Date.now();
+  return apps.filter((a) => {
+    if (!STALE_WAITING_STATUSES.has(a.status)) return false;
+    return (now - getLastUpdatedTs(a)) / (1000 * 60 * 60 * 24) > STALE_DAYS_THRESHOLD;
+  }).length;
 }
 
 // Only true pipeline stages. Rejected/Ghosted/Withdrawn are terminal exits that
@@ -103,6 +163,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [apps, setApps] = useState<JobApplication[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("applications");
+  const [coverLetterAppIds, setCoverLetterAppIds] = useState<Set<string>>(new Set());
 
   // ── profile ─────────────────────────────────────────────────────────────
   const [displayName, setDisplayName] = useState("");
@@ -185,23 +246,92 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       .map(([week, count]) => ({ week, count }))
       .sort((a, b) => a.week.localeCompare(b.week));
 
-    const salaries = apps
-      .filter((a) => a.status === "Offer" && a.salary)
-      .map((a) => parseFloat(String(a.salary).replace(/[^0-9.]/g, "")))
-      .filter((v) => Number.isFinite(v));
+    const offerSalaries = apps
+      .filter((a) => a.status === "Offer")
+      .map((a) => parseSalaryToAnnual(a.salary))
+      .filter((v): v is number => v !== null);
+
+    // Median annualized salary across every application with a usable figure
+    // (not just offers) — what comp range is actually being targeted.
+    const targetSalaries = apps
+      .map((a) => parseSalaryToAnnual(a.salary))
+      .filter((v): v is number => v !== null);
+
+    const { avgDaysToReject, avgDaysToAdvance } = calcResponseTimeSplit(apps);
 
     return {
       total: apps.length,
       statusCounts,
       sourceCounts,
       weeks,
-      medianSalary: median(salaries),
+      medianSalary: median(offerSalaries),
+      medianTargetSalary: median(targetSalaries),
       responseRate: calcResponseRate(apps),
-      avgResponseTime: calcAvgResponseTime(apps),
+      avgDaysToReject,
+      avgDaysToAdvance,
+      stalePipelineCount: calcStalePipelineCount(apps),
       screeningConversion: calcConversionRate(apps, "Applied", "Screening"),
       interviewConversion: calcConversionRate(apps, "Screening", "Interview Scheduled"),
       offerConversion: calcConversionRate(apps, "Interview Completed", "Offer"),
     };
+  }, [apps]);
+
+  // Histogram of annualized target salary across every application with a
+  // usable figure — buckets, not just a single median, to show the actual spread.
+  const salaryBuckets = useMemo(() => {
+    const BUCKETS = [
+      { name: "<$60k", max: 60_000 },
+      { name: "$60-80k", max: 80_000 },
+      { name: "$80-100k", max: 100_000 },
+      { name: "$100-120k", max: 120_000 },
+      { name: "$120-150k", max: 150_000 },
+      { name: "$150-200k", max: 200_000 },
+      { name: "$200k+", max: Infinity },
+    ];
+    const counts = BUCKETS.map((b) => ({ name: b.name, value: 0 }));
+    apps.forEach((a) => {
+      const annual = parseSalaryToAnnual(a.salary);
+      if (annual === null) return;
+      const idx = BUCKETS.findIndex((b) => annual <= b.max);
+      counts[idx === -1 ? BUCKETS.length - 1 : idx].value++;
+    });
+    return counts.filter((b) => b.value > 0);
+  }, [apps]);
+
+  // Response rate for applications with vs. without a cover letter attached.
+  const coverLetterImpact = useMemo(() => {
+    const withCL = apps.filter((a) => coverLetterAppIds.has(a.id));
+    const withoutCL = apps.filter((a) => !coverLetterAppIds.has(a.id));
+    return [
+      { label: "With Cover Letter", count: withCL.length, responseRate: withCL.length ? parseFloat(calcResponseRate(withCL) as string) : null },
+      { label: "Without Cover Letter", count: withoutCL.length, responseRate: withoutCL.length ? parseFloat(calcResponseRate(withoutCL) as string) : null },
+    ];
+  }, [apps, coverLetterAppIds]);
+
+  // Top locations applied to (long tail collapsed into "Other").
+  const locationData = useMemo(() => {
+    const map: Record<string, number> = {};
+    apps.forEach((a) => {
+      const loc = (a.location || "").trim() || "Not specified";
+      map[loc] = (map[loc] || 0) + 1;
+    });
+    const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]);
+    const top = sorted.slice(0, 6).map(([name, value]) => ({ name, value }));
+    const otherCount = sorted.slice(6).reduce((sum, [, v]) => sum + v, 0);
+    return otherCount > 0 ? [...top, { name: "Other", value: otherCount }] : top;
+  }, [apps]);
+
+  // Companies applied to more than once.
+  const repeatCompanies = useMemo(() => {
+    const map: Record<string, number> = {};
+    apps.forEach((a) => {
+      const company = (a.company || "").trim();
+      if (company) map[company] = (map[company] || 0) + 1;
+    });
+    return Object.entries(map)
+      .filter(([, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1])
+      .map(([company, count]) => ({ company, count }));
   }, [apps]);
 
   const pieData = useMemo(
@@ -297,6 +427,20 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     } catch { setNameInput(googleName); setShowNameModal(true); }
   };
 
+  // Used only for the Analytics "Cover Letter Impact" comparison — we just need
+  // to know which applications have one, not the letter content itself.
+  const fetchCoverLetterAppIds = async () => {
+    if (!session?.access_token) return;
+    try {
+      const res = await fetch(`${API}/cover-letters/application-ids`, { headers: { Authorization: `Bearer ${token()}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      setCoverLetterAppIds(new Set(data?.applicationIds ?? []));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
 
   // The Tailor tab assembled a fresh resume version server-side. Surface the
   // score + change log in the Builder, then switch to it — useResumeData loads
@@ -307,7 +451,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   };
 
   useEffect(() => {
-    if (session?.access_token) { fetchApps(); fetchProfile(); }
+    if (session?.access_token) { fetchApps(); fetchProfile(); fetchCoverLetterAppIds(); }
   }, [session]);
 
   useEffect(() => {
@@ -670,7 +814,16 @@ export default function JobApplicationTracker({ session }: { session: any }) {
           )}
 
           {activeTab === "analytics" && (
-            <AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} />
+            <AnalyticsTab
+              stats={stats}
+              pieData={pieData}
+              sourceData={sourceData}
+              monthData={monthData}
+              locationData={locationData}
+              repeatCompanies={repeatCompanies}
+              salaryBuckets={salaryBuckets}
+              coverLetterImpact={coverLetterImpact}
+            />
           )}
 
           {activeTab === "api-usage" && (

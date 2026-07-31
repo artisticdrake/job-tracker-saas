@@ -118,16 +118,23 @@ describe('ApplicationsTab', () => {
 describe('AnalyticsTab', () => {
   const stats: any = {
     total: 10, statusCounts: { Applied: 5, Offer: 1 }, sourceCounts: { LinkedIn: 6 },
-    weeks: [{ week: '2026-06-01', count: 3 }], medianSalary: 120000,
-    responseRate: '40.0', avgResponseTime: '5.0',
+    weeks: [{ week: '2026-06-01', count: 3 }], medianSalary: 120000, medianTargetSalary: 110000,
+    responseRate: '40.0', avgDaysToReject: '5.0', avgDaysToAdvance: '3.0', stalePipelineCount: 2,
     screeningConversion: '50.0', interviewConversion: '30.0', offerConversion: '20.0',
   };
   const pieData = [{ name: 'Applied', value: 5 }, { name: 'Offer', value: 1 }];
   const sourceData = [{ name: 'LinkedIn', value: 6 }];
   const monthData = [{ month: "Jun '26", count: 10 }];
+  const locationData = [{ name: 'NYC', value: 6 }];
+  const repeatCompanies = [{ company: 'Amazon', count: 3 }];
+  const salaryBuckets = [{ name: '$100-120k', value: 4 }];
+  const coverLetterImpact = [
+    { label: 'With Cover Letter', count: 4, responseRate: 50 },
+    { label: 'Without Cover Letter', count: 6, responseRate: 30 },
+  ];
 
   it('renders KPI labels without crashing', () => {
-    render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} />);
+    render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} />);
     expect(screen.getByText(/Response Rate/i)).toBeInTheDocument();
   });
 });
