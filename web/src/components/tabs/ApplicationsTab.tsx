@@ -1,6 +1,6 @@
 import {
   Plus, Search, Edit2, Trash2, ExternalLink, Sparkles, Wand2,
-  Loader2, Building2, LayoutList, Send, Eye, CalendarDays, Trophy, Ban,
+  Loader2, Building2, LayoutList, Send, Eye, CalendarDays, Trophy, Ban, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { useCountUp } from "@/lib/useCountUp";
 import { STATUS_CONFIG } from "@/lib/constants";
 import { formatDate, formatShortDate } from "@/lib/dateUtils";
-import type { JobApplication } from "@/lib/types";
+import type { JobApplication, ResumeAppLink } from "@/lib/types";
 
 interface Stats {
   total: number;
@@ -31,6 +31,8 @@ interface ApplicationsTabProps {
   aiSummary: string;
   loadingSummary: boolean;
   onRefreshSummary: () => void;
+  resumeAppLinks?: Record<string, ResumeAppLink>;
+  onViewResume?: (versionId: string) => void;
 }
 
 /* ── Stat card config ───────────────────────────────────────────────────── */
@@ -174,6 +176,7 @@ export default function ApplicationsTab({
   searchTerm, setSearchTerm, onAddNew,
   onEdit, onDelete, onRowClick,
   aiSummary, loadingSummary, onRefreshSummary,
+  resumeAppLinks, onViewResume,
 }: ApplicationsTabProps) {
   const getStatValue = (key: string) => {
     if (key === "total") return stats.total;
@@ -310,6 +313,7 @@ export default function ApplicationsTab({
                 ) : (
                   sortedApps.map((app) => {
                     const cfg = STATUS_CONFIG[app.status] ?? STATUS_CONFIG["Applied"];
+                    const resumeLink = resumeAppLinks?.[app.id];
                     return (
                       <tr
                         key={app.id}
@@ -371,6 +375,16 @@ export default function ApplicationsTab({
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent className="text-xs">Open Job Post</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {resumeLink && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-muted dark:hover:bg-white/[0.07]" onClick={() => onViewResume?.(resumeLink.id)}>
+                                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent className="text-xs">{resumeLink.version_name}</TooltipContent>
                               </Tooltip>
                             )}
                             <Tooltip>

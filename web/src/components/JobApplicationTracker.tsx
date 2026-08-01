@@ -873,6 +873,8 @@ export default function JobApplicationTracker({ session }: { session: any }) {
               aiSummary={aiSummary}
               loadingSummary={loadingSummary}
               onRefreshSummary={generateAiSummary}
+              resumeAppLinks={resumeAppLinks}
+              onViewResume={handleViewResume}
             />
           )}
 
