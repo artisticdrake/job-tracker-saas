@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { todayISO, startOfWeekISO, tsToYYYYMMDD } from "@/lib/dateUtils";
 import { computeTimelineForSubmit } from "@/lib/timelineUpdate";
+import { calcRoleCategoryStats, calcJdSignals } from "@/lib/roleInsights";
 import { STATUSES, SOURCES } from "@/lib/constants";
 import type { JobApplication, AppFormData } from "@/lib/types";
 import type { AssembleResult } from "@/components/tabs/TailorTab";
@@ -334,6 +335,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
       .sort((a, b) => b[1] - a[1])
       .map(([company, count]) => ({ company, count }));
   }, [apps]);
+
+  const roleCategoryStats = useMemo(() => calcRoleCategoryStats(apps), [apps]);
+  const jdSignals = useMemo(() => calcJdSignals(apps), [apps]);
 
   const pieData = useMemo(
     () => Object.entries(stats.statusCounts).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value })),
@@ -854,6 +858,8 @@ export default function JobApplicationTracker({ session }: { session: any }) {
               repeatCompanies={repeatCompanies}
               salaryBuckets={salaryBuckets}
               coverLetterImpact={coverLetterImpact}
+              roleCategoryStats={roleCategoryStats}
+              jdSignals={jdSignals}
             />
           )}
 

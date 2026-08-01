@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "tsx tests/normalize.spec.ts && tsx tests/links.spec.ts && tsx tests/timelineUpdate.spec.ts && vitest run",
+    "test": "tsx tests/normalize.spec.ts && tsx tests/links.spec.ts && tsx tests/timelineUpdate.spec.ts && tsx tests/roleInsights.spec.ts && vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest"
   },

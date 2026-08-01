@@ -132,16 +132,18 @@ describe('AnalyticsTab', () => {
     { label: 'With Cover Letter', count: 4, responseRate: 50 },
     { label: 'Without Cover Letter', count: 6, responseRate: 30 },
   ];
+  const roleCategoryStats = [{ category: 'AI/ML', count: 5, responseRate: 40 }];
+  const jdSignals = [{ label: 'Python', count: 3, responseRate: 67 }];
 
   it('renders KPI labels without crashing', () => {
-    render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} />);
+    render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} roleCategoryStats={roleCategoryStats} jdSignals={jdSignals} />);
     expect(screen.getAllByText(/Response Rate/i).length).toBeGreaterThan(0);
   });
 
   it('clicking a metric card reveals its description, clicking again hides it', async () => {
     const user = userEvent.setup();
-    render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} />);
-    const card = screen.getByText(/Response Rate/i).closest('[role="button"]')!;
+    render(<AnalyticsTab stats={stats} pieData={pieData} sourceData={sourceData} monthData={monthData} locationData={locationData} repeatCompanies={repeatCompanies} salaryBuckets={salaryBuckets} coverLetterImpact={coverLetterImpact} roleCategoryStats={roleCategoryStats} jdSignals={jdSignals} />);
+    const card = screen.getByText(/^Response Rate$/i).closest('[role="button"]')!;
     expect(screen.queryByText(/any status change/i)).not.toBeInTheDocument();
     await user.click(card);
     expect(screen.getByText(/any status change/i)).toBeInTheDocument();

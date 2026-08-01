@@ -62,6 +62,8 @@ interface AnalyticsTabProps {
   repeatCompanies: { company: string; count: number }[];
   salaryBuckets: { name: string; value: number }[];
   coverLetterImpact: { label: string; count: number; responseRate: number | null }[];
+  roleCategoryStats: { category: string; count: number; responseRate: number }[];
+  jdSignals: { label: string; count: number; responseRate: number }[];
 }
 
 /* ── Metric config ───────────────────────────────────────────────────────── */
@@ -257,7 +259,7 @@ function MonthlyChart({ data }: { data: { month: string; count: number }[] }) {
 }
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
-export default function AnalyticsTab({ stats, pieData, sourceData, monthData, locationData, repeatCompanies, salaryBuckets, coverLetterImpact }: AnalyticsTabProps) {
+export default function AnalyticsTab({ stats, pieData, sourceData, monthData, locationData, repeatCompanies, salaryBuckets, coverLetterImpact, roleCategoryStats, jdSignals }: AnalyticsTabProps) {
   const getRaw = (key: string): string | number | null => {
     if (key === "medianSalary") return stats.medianSalary;
     if (key === "medianTargetSalary") return stats.medianTargetSalary;
@@ -533,6 +535,54 @@ export default function AnalyticsTab({ stats, pieData, sourceData, monthData, lo
                     <div
                       className="h-full rounded-full bg-primary transition-all duration-700"
                       style={{ width: `${responseRate ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ChartCard>
+
+        {/* Response Rate by Role Category */}
+        <ChartCard title="Response Rate by Role" delay="stagger-3">
+          {roleCategoryStats.length === 0 ? <EmptyChart label="role" /> : (
+            <div className="space-y-4 pt-2">
+              {roleCategoryStats.map(({ category, count, responseRate }) => (
+                <div key={category} className="space-y-2">
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-[12px] font-medium text-muted-foreground">
+                      {category} <span className="text-muted-foreground/40">({count})</span>
+                    </span>
+                    <span className="text-[13px] font-bold tabular-nums text-primary">{responseRate}%</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.05]">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-700"
+                      style={{ width: `${responseRate}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ChartCard>
+
+        {/* JD Signals — which keywords in the job description correlate with a response */}
+        <ChartCard title="What's in the JD When You Hear Back" delay="stagger-4">
+          {jdSignals.length === 0 ? <EmptyChart label="JD signal" /> : (
+            <div className="space-y-4 pt-2">
+              {jdSignals.map(({ label, count, responseRate }) => (
+                <div key={label} className="space-y-2">
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-[12px] font-medium text-muted-foreground">
+                      {label} <span className="text-muted-foreground/40">({count})</span>
+                    </span>
+                    <span className="text-[13px] font-bold tabular-nums text-primary">{responseRate}%</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.05]">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-700"
+                      style={{ width: `${responseRate}%` }}
                     />
                   </div>
                 </div>
