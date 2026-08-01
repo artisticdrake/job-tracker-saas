@@ -1,8 +1,6 @@
 import { ExternalLink, Edit2, Clock, MapPin, DollarSign, Calendar, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { STATUS_CONFIG } from "@/lib/constants";
 import { formatDate, formatShortDate } from "@/lib/dateUtils";
@@ -81,7 +79,11 @@ export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineE
           </div>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0">
+        {/* Plain native scroll — not Radix ScrollArea. A flex-1 + min-h-0 child
+            with overflow-y-auto is the simplest reliable pattern for "header
+            stays pinned, body scrolls" inside a max-height dialog; ScrollArea's
+            extra Root/Viewport layers were not scrolling reliably here. */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="px-6 py-5 space-y-5">
 
             {/* Info grid */}
@@ -193,7 +195,7 @@ export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineE
               </>
             )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
