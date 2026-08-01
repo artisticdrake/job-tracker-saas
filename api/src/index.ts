@@ -204,10 +204,16 @@ async function createBuilderVersion(authClient: any, userId: string, opts: {
   const { resumeContent, jobDescription, company, role, score, changeLog = [], settings = {} } = opts;
   const jdHash = hashJD(jobDescription);
 
-  const label = (typeof company === 'string' && company.trim())
-    || (typeof role === 'string' && role.trim())
-    || 'Resume';
-  const versionName = `Tailored — ${label} ${new Date().toISOString()}`;
+  // The assembler prompt sets header.title to "<JD's target role> | <matching
+  // skills>" (see buildAssemblerPrompt) — its first segment IS the role being
+  // tailored for, so use it instead of a raw timestamp: "Resume <Name> <Role>".
+  const nameFromResume = typeof resumeContent?.header?.name === 'string' ? resumeContent.header.name.trim() : '';
+  const roleFromHeader = typeof resumeContent?.header?.title === 'string'
+    ? resumeContent.header.title.split('|')[0].trim()
+    : '';
+  const roleLabel = roleFromHeader || (typeof role === 'string' && role.trim()) || (typeof company === 'string' && company.trim()) || '';
+  const versionName = ['Resume', nameFromResume, roleLabel].filter(Boolean).join(' ')
+    || `Resume ${new Date().toISOString().slice(0, 10)}`;
 
   const { data: version, error: insertErr } = await authClient
     .from('resume_builder')
