@@ -772,6 +772,7 @@ export default function TailorTab({ apps, session, onAssembled }: Props) {
           approvedBullets: approved,
           company: linkedApp?.company,
           role: linkedApp?.position,
+          applicationId: linkedAppId || undefined,
         }),
       });
       const data = await res.json();

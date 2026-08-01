@@ -1,10 +1,10 @@
-import { ExternalLink, Edit2, Clock, MapPin, DollarSign, Calendar, X } from "lucide-react";
+import { ExternalLink, Edit2, Clock, MapPin, DollarSign, Calendar, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { STATUS_CONFIG } from "@/lib/constants";
 import { formatDate, formatShortDate } from "@/lib/dateUtils";
-import type { JobApplication } from "@/lib/types";
+import type { JobApplication, ResumeAppLink } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface AppDetailModalProps {
@@ -12,6 +12,8 @@ interface AppDetailModalProps {
   onClose: () => void;
   onEdit: (app: JobApplication) => void;
   onDeleteTimelineEntry?: (appId: string, entryIndex: number) => void;
+  resumeLink?: ResumeAppLink | null;
+  onViewResume?: (versionId: string) => void;
 }
 
 const AVATAR_PALETTES = [
@@ -37,7 +39,7 @@ function CompanyAvatar({ company }: { company: string }) {
   );
 }
 
-export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineEntry }: AppDetailModalProps) {
+export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineEntry, resumeLink, onViewResume }: AppDetailModalProps) {
   if (!app) return null;
   const cfg = STATUS_CONFIG[app.status] ?? STATUS_CONFIG["Applied"];
 
@@ -68,6 +70,14 @@ export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineE
                   <a href={app.jobUrl} target="_blank" rel="noreferrer">
                     <ExternalLink className="h-3 w-3" /> Job Post
                   </a>
+                </Button>
+              )}
+              {resumeLink && (
+                <Button variant="outline" size="sm"
+                  onClick={() => onViewResume?.(resumeLink.id)}
+                  title={resumeLink.version_name}
+                  className="gap-1.5 border-white/[0.1] bg-white/[0.04] hover:bg-white/[0.08] text-[12px] h-8">
+                  <FileText className="h-3 w-3" /> View Resume
                 </Button>
               )}
               <Button size="sm" variant="outline"

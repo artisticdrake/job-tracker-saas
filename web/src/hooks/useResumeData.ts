@@ -69,7 +69,7 @@ interface UseResumeDataReturn {
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useResumeData(session: Session | null): UseResumeDataReturn {
+export function useResumeData(session: Session | null, targetVersionId?: string | null): UseResumeDataReturn {
   const userId = session?.user?.id ?? '';
   const token = session?.access_token ?? '';
 
@@ -89,6 +89,12 @@ export function useResumeData(session: Session | null): UseResumeDataReturn {
   const activeVersionIdRef = useRef<string | null>(null);
   activeVersionIdRef.current = activeVersionId;
 
+  // Captured once at mount, deliberately not a dependency of fetchVersions —
+  // this is a one-shot "open this version" handoff (e.g. from an application's
+  // detail view), not something that should retrigger a refetch if the caller
+  // clears it after consuming it.
+  const targetVersionIdRef = useRef(targetVersionId);
+
   // ── Fetch all versions ───────────────────────────────────────────────────
   const fetchVersions = useCallback(async () => {
     if (!userId) return;
@@ -106,11 +112,16 @@ export function useResumeData(session: Session | null): UseResumeDataReturn {
       const fetched = (data ?? []) as ResumeBuilderData[];
       setVersions(fetched);
 
-      // Load the newest version as the active resume. The Tailor "Send to
-      // Builder" flow assembles a fresh version server-side (POST /assemble/claude)
-      // before this runs, so it lands first here and becomes the active resume.
+      // Load the newest version as the active resume, unless a specific target
+      // version was requested (e.g. "View Resume" from an application's detail
+      // view) — falls back to newest if the target id isn't found (stale/deleted).
+      // The Tailor "Send to Builder" flow assembles a fresh version server-side
+      // (POST /assemble/claude) before this runs, so it lands first here anyway.
       if (fetched.length > 0) {
-        const first = fetched[0];
+        const target = targetVersionIdRef.current
+          ? fetched.find((v) => v.id === targetVersionIdRef.current)
+          : null;
+        const first = target ?? fetched[0];
         setActiveVersionId(first.id);
         dispatch({
           type: 'RESET',

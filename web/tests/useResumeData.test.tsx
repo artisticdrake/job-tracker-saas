@@ -134,6 +134,27 @@ describe('useResumeData', () => {
     expect(result.current.content.summary).toBe('ASSEMBLED');
   });
 
+  it('targetVersionId activates that version instead of the newest', async () => {
+    const targeted = { ...DEFAULT_RESUME_CONTENT, summary: 'TARGETED' };
+    dbState.versions = [
+      versionRow('v-newest', 'Newest'),
+      versionRow('v-target', 'Targeted', targeted),
+    ];
+    const { result } = renderHook(() => useResumeData(session, 'v-target'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.activeVersionId).toBe('v-target');
+    expect(result.current.content.summary).toBe('TARGETED');
+  });
+
+  it('targetVersionId not found among versions falls back to newest, unchanged from default behavior', async () => {
+    dbState.versions = [versionRow('v-newest', 'Newest'), versionRow('v1', 'Primary')];
+    const { result } = renderHook(() => useResumeData(session, 'does-not-exist'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.activeVersionId).toBe('v-newest');
+  });
+
   it('switchVersion loads the chosen version content', async () => {
     const v2content = { ...DEFAULT_RESUME_CONTENT, summary: 'V2 SUMMARY' };
     dbState.versions = [versionRow('v1', 'Primary'), versionRow('v2', 'Second', v2content)];

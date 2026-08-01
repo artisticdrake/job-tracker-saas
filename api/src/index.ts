@@ -199,9 +199,9 @@ async function tailorWithCache(opts: {
 // version the exact same way. Returns the created version row.
 async function createBuilderVersion(authClient: any, userId: string, opts: {
   resumeContent: any; jobDescription: string; company?: string; role?: string;
-  score: number | null; changeLog?: string[]; settings?: any;
+  score: number | null; changeLog?: string[]; settings?: any; applicationId?: string | null;
 }): Promise<any> {
-  const { resumeContent, jobDescription, company, role, score, changeLog = [], settings = {} } = opts;
+  const { resumeContent, jobDescription, company, role, score, changeLog = [], settings = {}, applicationId } = opts;
   const jdHash = hashJD(jobDescription);
 
   // The assembler prompt sets header.title to "<JD's target role> | <matching
@@ -224,6 +224,7 @@ async function createBuilderVersion(authClient: any, userId: string, opts: {
       settings: settings ?? {},
       job_description: jobDescription,
       jd_hash: jdHash,
+      application_id: applicationId ?? null,
       updated_at: new Date().toISOString(),
     })
     .select()
@@ -1085,7 +1086,7 @@ app.post('/rerank/claude', requireAuth, async (req, res) => {
 app.post('/assemble/claude', requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
   const authClient = getAuthClient(req.headers.authorization as string);
-  const { jobDescription, approvedBullets: rawBullets, company, role, currentResume: rawCurrentResume } = req.body;
+  const { jobDescription, approvedBullets: rawBullets, company, role, currentResume: rawCurrentResume, applicationId } = req.body;
 
   if (!jobDescription || typeof jobDescription !== 'string') {
     return res.status(400).json({ success: false, error: 'jobDescription is required' });
@@ -1167,6 +1168,7 @@ app.post('/assemble/claude', requireAuth, async (req, res) => {
       version = await createBuilderVersion(authClient, userId, {
         resumeContent, jobDescription, company, role, score, changeLog,
         settings: latestVersion?.settings ?? {},
+        applicationId: typeof applicationId === 'string' && applicationId ? applicationId : undefined,
       });
     } catch (err: any) {
       console.error('[/assemble/claude] failed to create version:', err.message);
@@ -1275,6 +1277,35 @@ app.get('/cover-letters/application-ids', requireAuth, async (req, res) => {
   if (error) return res.status(500).json({ success: false, error: error.message });
   const applicationIds = [...new Set((data ?? []).map((r: any) => r.application_id as string))];
   return res.json({ success: true, applicationIds });
+});
+
+// GET /resume-builder/application-links — for each of this user's applications
+// that has a tailored resume, the most recent linked resume_builder version
+// (id + label). Unlike cover-letters/application-ids this returns a map, not
+// just an id list — the whole point is to open a *specific* version, and
+// resume_builder has no uniqueness constraint per application (a JD can be
+// re-tailored), so "which one" has to be resolved here, not by the caller.
+app.get('/resume-builder/application-links', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const authClient = getAuthClient(req.headers.authorization as string);
+
+  const { data, error } = await authClient
+    .from('resume_builder')
+    .select('id, application_id, version_name, updated_at')
+    .eq('user_id', userId)
+    .not('application_id', 'is', null)
+    .order('updated_at', { ascending: false });
+
+  if (error) return res.status(500).json({ success: false, error: error.message });
+
+  // Rows arrive newest-first; keep only the first (most recent) row seen per
+  // application_id.
+  const links: Record<string, { id: string; version_name: string; updated_at: string }> = {};
+  for (const r of data ?? []) {
+    const appId = r.application_id as string;
+    if (!links[appId]) links[appId] = { id: r.id, version_name: r.version_name, updated_at: r.updated_at };
+  }
+  return res.json({ success: true, links });
 });
 
 // PATCH /cover-letter/:id — durably save a user edit to a cover letter.

@@ -15,6 +15,8 @@ interface Props {
   session: Session;
   assembleResult?: AssembleResult | null;
   onDismissAssemble?: () => void;
+  targetVersionId?: string | null;
+  onConsumeTargetVersion?: () => void;
 }
 
 function AssembleBanner({ result, onDismiss }: { result: AssembleResult; onDismiss?: () => void }) {
@@ -64,7 +66,7 @@ function AssembleBanner({ result, onDismiss }: { result: AssembleResult; onDismi
   );
 }
 
-export default function ResumeBuilderLayout({ session, assembleResult, onDismissAssemble }: Props) {
+export default function ResumeBuilderLayout({ session, assembleResult, onDismissAssemble, targetVersionId, onConsumeTargetVersion }: Props) {
   const {
     versions,
     activeVersionId,
@@ -84,7 +86,14 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
     renameVersion,
     switchVersion,
     adoptServerVersion,
-  } = useResumeData(session);
+  } = useResumeData(session, targetVersionId);
+
+  // Fire once at mount to clear the parent's held target id — otherwise the
+  // next normal visit to this tab (via the sidebar, not "View Resume") would
+  // remount with the same stale id and wrongly re-target that old version.
+  useEffect(() => {
+    if (targetVersionId) onConsumeTargetVersion?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const printRef = useRef<HTMLDivElement>(null);
 
@@ -161,7 +170,10 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
       const res = await fetch(`${API}/assemble/claude`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ jobDescription: jd, approvedBullets: [], currentResume: content }),
+        body: JSON.stringify({
+          jobDescription: jd, approvedBullets: [], currentResume: content,
+          applicationId: activeVersion?.application_id ?? undefined,
+        }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Re-assemble failed.');
@@ -172,7 +184,7 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
     } finally {
       setReassembling(false);
     }
-  }, [jd, content, session, adoptServerVersion]);
+  }, [jd, content, session, adoptServerVersion, activeVersion?.application_id]);
 
   if (loading) {
     return (

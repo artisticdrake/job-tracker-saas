@@ -6,14 +6,18 @@ interface Props {
   session: Session;
   assembleResult?: AssembleResult | null;
   onDismissAssemble?: () => void;
+  targetVersionId?: string | null;
+  onConsumeTargetVersion?: () => void;
 }
 
-export default function ResumeBuilder({ session, assembleResult, onDismissAssemble }: Props) {
+export default function ResumeBuilder({ session, assembleResult, onDismissAssemble, targetVersionId, onConsumeTargetVersion }: Props) {
   return (
     <ResumeBuilderLayout
       session={session}
       assembleResult={assembleResult}
       onDismissAssemble={onDismissAssemble}
+      targetVersionId={targetVersionId}
+      onConsumeTargetVersion={onConsumeTargetVersion}
     />
   );
 }

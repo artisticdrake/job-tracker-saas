@@ -75,6 +75,11 @@ export interface ResumeBuilderData {
   // Builder scores the live content against this; null/absent → scoring disabled.
   job_description?: string | null;
   jd_hash?: string | null;
+  // The application this version was generated for (set via TailorTab's
+  // linkedAppId at "Send to Builder" time). null/absent → not linked to a
+  // tracked application (e.g. created directly in the Builder, or via
+  // /jobs/:id/generate against scraped_jobs).
+  application_id?: string | null;
 }
 
 // ── Undo/Redo state ─────────────────────────────────────────────────────────

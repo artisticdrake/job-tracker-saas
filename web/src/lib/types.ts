@@ -45,6 +45,14 @@ export interface JobApplication {
   last_updated: string;
 }
 
+// The tailored resume_builder version linked to a given application, as
+// returned by GET /resume-builder/application-links (most recent one only).
+export interface ResumeAppLink {
+  id: string;
+  version_name: string;
+  updated_at: string;
+}
+
 export interface AppFormData {
   company: string;
   position: string;

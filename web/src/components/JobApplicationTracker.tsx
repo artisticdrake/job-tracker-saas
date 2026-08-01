@@ -4,7 +4,7 @@ import { todayISO, startOfWeekISO, tsToYYYYMMDD } from "@/lib/dateUtils";
 import { computeTimelineForSubmit } from "@/lib/timelineUpdate";
 import { calcRoleCategoryStats, calcJdSignals } from "@/lib/roleInsights";
 import { STATUSES, SOURCES } from "@/lib/constants";
-import type { JobApplication, AppFormData } from "@/lib/types";
+import type { JobApplication, AppFormData, ResumeAppLink } from "@/lib/types";
 import type { AssembleResult } from "@/components/tabs/TailorTab";
 
 import Sidebar, { type TabId } from "@/components/layout/Sidebar";
@@ -166,6 +166,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("applications");
   const [coverLetterAppIds, setCoverLetterAppIds] = useState<Set<string>>(new Set());
+  const [resumeAppLinks, setResumeAppLinks] = useState<Record<string, ResumeAppLink>>({});
 
   // ── profile ─────────────────────────────────────────────────────────────
   const [displayName, setDisplayName] = useState("");
@@ -206,6 +207,10 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
   // ── assembly result (score + change log from POST /assemble/claude) ───────
   const [assembleResult, setAssembleResult] = useState<AssembleResult | null>(null);
+
+  // ── "View Resume" handoff — opens a specific resume_builder version in the
+  // Builder when triggered from an application's detail view ────────────────
+  const [targetResumeVersionId, setTargetResumeVersionId] = useState<string | null>(null);
 
   // ── auto-ghost ──────────────────────────────────────────────────────────
   const [ghostNotice, setGhostNotice] = useState<number>(0);
@@ -446,6 +451,19 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     }
   };
 
+  // Powers the "View Resume" button in an application's detail view — for each
+  // application with a tailored resume, its most recent linked version.
+  const fetchResumeAppLinks = async () => {
+    if (!session?.access_token) return;
+    try {
+      const res = await fetch(`${API}/resume-builder/application-links`, { headers: { Authorization: `Bearer ${token()}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      setResumeAppLinks(data?.links ?? {});
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // The Tailor tab assembled a fresh resume version server-side. Surface the
   // score + change log in the Builder, then switch to it — useResumeData loads
@@ -455,8 +473,16 @@ export default function JobApplicationTracker({ session }: { session: any }) {
     setActiveTab("resume-builder");
   };
 
+  // Opens the resume tailored for a specific application, triggered from that
+  // application's detail view.
+  const handleViewResume = (versionId: string) => {
+    setExpandedApp(null);
+    setTargetResumeVersionId(versionId);
+    setActiveTab("resume-builder");
+  };
+
   useEffect(() => {
-    if (session?.access_token) { fetchApps(); fetchProfile(); fetchCoverLetterAppIds(); }
+    if (session?.access_token) { fetchApps(); fetchProfile(); fetchCoverLetterAppIds(); fetchResumeAppLinks(); }
   }, [session]);
 
   useEffect(() => {
@@ -721,6 +747,8 @@ export default function JobApplicationTracker({ session }: { session: any }) {
               session={session}
               assembleResult={assembleResult}
               onDismissAssemble={() => setAssembleResult(null)}
+              targetVersionId={targetResumeVersionId}
+              onConsumeTargetVersion={() => setTargetResumeVersionId(null)}
             />
           </div>
         )}
@@ -910,6 +938,8 @@ export default function JobApplicationTracker({ session }: { session: any }) {
         onClose={() => setExpandedApp(null)}
         onEdit={handleEdit}
         onDeleteTimelineEntry={handleDeleteTimelineEntry}
+        resumeLink={expandedApp ? resumeAppLinks[expandedApp.id] ?? null : null}
+        onViewResume={handleViewResume}
       />
 
       <DeleteConfirmDialog
