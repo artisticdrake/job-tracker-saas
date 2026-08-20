@@ -1,8 +1,16 @@
+import dns from 'dns';
+import https from 'https';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+
+// Node's fetch (undici) tries IPv6 first. On networks where IPv6 is advertised by
+// DNS but not actually routable (common on home routers), that first attempt hangs
+// or fails outright and surfaces as a generic "fetch failed" with no useful detail —
+// exactly the failure mode hit calling api.anthropic.com. Preferring IPv4 sidesteps it.
+dns.setDefaultResultOrder('ipv4first');
 import { supabase, getAuthClient } from './lib/supabase';
 import { requireAuth } from './middleware/auth';
 import OpenAI from 'openai';
@@ -38,6 +46,50 @@ const hashProfile = (lib: unknown) => sha(JSON.stringify(lib ?? {}));
 // exposes — so a score keyed on it always matches what a recruiter's parser reads.
 const hashContent = (rc: unknown) => sha(resumeContentToText(rc as any));
 
+// Node's global `fetch` (undici) negotiates TLS/HTTP more strictly than the
+// classic `https` module — on machines where antivirus or a corporate proxy does
+// HTTPS/SSL inspection (Kaspersky, Avast, Bitdefender, ESET, Zscaler, etc.), that
+// stricter negotiation gets the connection reset mid-request ("other side closed",
+// UND_ERR_SOCKET), even though those same tools intercept classic `https` requests
+// fine. Anthropic's API is the one truly load-bearing external call in this app, so
+// it goes through `https` directly rather than fetch to sidestep that failure mode.
+function httpsPostJson(url: string, headers: Record<string, string>, body: string, timeoutMs = 120_000): Promise<{ status: number; json: any }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request({
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      method: 'POST',
+      headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+      timeout: timeoutMs,
+    }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode ?? 0, json: data ? JSON.parse(data) : {} });
+        } catch (e: any) {
+          reject(new Error(`Failed to parse Anthropic response as JSON: ${e.message}`));
+        }
+      });
+    });
+    // A tailor/assemble call sends a large prompt then sits waiting — this is a
+    // non-streaming request, so it's silent while Claude generates up to several
+    // thousand tokens (can be 20-60+s with zero bytes on the wire). Home routers/
+    // NATs commonly reset TCP connections they judge "idle" well within that
+    // window ("socket hang up" / ECONNRESET). TCP keep-alive probes keep the
+    // connection looking active so it survives the quiet generation time.
+    req.on('socket', (socket) => {
+      socket.setKeepAlive(true, 10_000);
+    });
+    req.on('timeout', () => req.destroy(new Error('Request to Anthropic timed out')));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 // ── Claude helpers (shared cores) ─────────────────────────────────────────────
 // The tailor / scorer / assembler / cover-letter routes and the new job-triage
 // routes all talk to Claude the SAME way: claude-sonnet-4-6, temperature 0,
@@ -47,32 +99,31 @@ const hashContent = (rc: unknown) => sha(resumeContentToText(rc as any));
 async function callClaudeJSON(apiKey: string, system: string, user: string, maxTokens: number, meta: LlmCallMeta): Promise<any> {
   const startedAt = Date.now();
   const MODEL = 'claude-sonnet-4-6';
-  let response: Response;
+  let ok: boolean;
   let responseData: any;
   try {
-    response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: maxTokens,
-        temperature: 0,
-        system,
-        messages: [{ role: 'user', content: user }],
-      }),
-    });
-    responseData = await response.json() as any;
+    const { status, json } = await httpsPostJson('https://api.anthropic.com/v1/messages', {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    }, JSON.stringify({
+      model: MODEL,
+      max_tokens: maxTokens,
+      temperature: 0,
+      system,
+      messages: [{ role: 'user', content: user }],
+    }));
+    ok = status >= 200 && status < 300;
+    responseData = json;
   } catch (err: any) {
     // Network / transport failure — no response body, no tokens.
-    logLlmCall({ provider: 'anthropic', model: MODEL, ...meta, status: 'error', errorMessage: err?.message ?? String(err), latencyMs: Date.now() - startedAt });
+    const causeMsg = err?.cause?.message ?? err?.cause?.code ?? null;
+    console.error('[callClaudeJSON] transport error:', err?.message, causeMsg ? `cause: ${causeMsg}` : '(no cause)');
+    logLlmCall({ provider: 'anthropic', model: MODEL, ...meta, status: 'error', errorMessage: causeMsg ? `${err?.message ?? String(err)} (${causeMsg})` : (err?.message ?? String(err)), latencyMs: Date.now() - startedAt });
     throw err;
   }
 
-  if (!response.ok) {
+  if (!ok) {
     const errMsg = responseData?.error?.message || 'Claude API error';
     logLlmCall({ provider: 'anthropic', model: responseData?.model || MODEL, ...meta, status: 'error', errorMessage: errMsg, latencyMs: Date.now() - startedAt });
     throw new Error(errMsg);
@@ -985,6 +1036,51 @@ app.post('/tailor/claude', requireAuth, async (req, res) => {
     return res.json({ success: true, resumeContent, review, fromCache });
   } catch (err: any) {
     console.error('[/tailor/claude] error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Commit an already-tailored resume to the Builder — NO Claude call ──────────
+// POST /tailor/commit
+// Body: { resumeContent, jobDescription, score?, company?, role?, applicationId? }
+// /tailor/claude already produced a finished resumeContent + score; when the user
+// has no bullet edits to weave in, sending that straight to the Builder should not
+// cost a second full generation call (that's what /assemble/claude was doing —
+// silently discarding the tailor result and re-deriving a resume from scratch).
+// This just persists the result as a new resume_builder version.
+app.post('/tailor/commit', requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  const authClient = getAuthClient(req.headers.authorization as string);
+  const { resumeContent: rawContent, jobDescription, score: rawScore, company, role, applicationId } = req.body;
+
+  if (!jobDescription || typeof jobDescription !== 'string') {
+    return res.status(400).json({ success: false, error: 'jobDescription is required' });
+  }
+  if (!rawContent || typeof rawContent !== 'object') {
+    return res.status(400).json({ success: false, error: 'resumeContent is required' });
+  }
+
+  const resumeContent = sanitizeResumeContent(normalizeResumeContent(rawContent));
+  const score = typeof rawScore === 'number' ? Math.round(rawScore) : null;
+
+  try {
+    const { data: latestVersion } = await authClient
+      .from('resume_builder')
+      .select('settings')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const version = await createBuilderVersion(authClient, userId, {
+      resumeContent, jobDescription, company, role, score, changeLog: [],
+      settings: latestVersion?.settings ?? {},
+      applicationId: typeof applicationId === 'string' && applicationId ? applicationId : undefined,
+    });
+    console.log(`[/tailor/commit] userId=${userId} score=${score ?? 'n/a'} versionId=${version?.id}`);
+    return res.json({ success: true, version, resumeContent, score });
+  } catch (err: any) {
+    console.error('[/tailor/commit] error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
