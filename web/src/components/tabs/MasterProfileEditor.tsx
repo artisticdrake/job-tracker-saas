@@ -140,7 +140,7 @@ function BulletEditor({ bullet, onChange, onDelete }: {
 
       {/* Metadata panel */}
       {expanded && (
-        <div className="border-t border-border bg-muted/10 p-3 grid grid-cols-2 gap-3">
+        <div className="border-t border-border bg-muted/10 p-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <TagField
             label="Skills (canonical)"
             value={bullet.skills}
@@ -264,7 +264,7 @@ function ExperienceItem({ exp, onChange, onDelete }: {
         </button>
       </div>
       <div className="p-3 space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Organization" value={exp.org} onChange={v => upd({ org: v })} placeholder="Boston University" />
           <Field label="Role / Title" value={exp.role} onChange={v => upd({ role: v })} placeholder="Software Engineer" />
           <Field label="Location (optional)" value={exp.location ?? ""} onChange={v => upd({ location: v })} placeholder="Boston, MA" />
@@ -299,7 +299,7 @@ function ProjectItem({ proj, onChange, onDelete }: {
         </button>
       </div>
       <div className="p-3 space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Project Name" value={proj.name} onChange={v => upd({ name: v })} placeholder="CHATALOGUE" className="col-span-2" />
           <Field label="Start Date (optional)" value={proj.startDate ?? ""} onChange={v => upd({ startDate: v })} placeholder="2024" />
           <Field label="End Date (optional)" value={proj.endDate ?? ""} onChange={v => upd({ endDate: v })} placeholder="2025" />
@@ -327,7 +327,7 @@ function EducationItem({ edu, onChange, onDelete }: {
         </button>
       </div>
       <div className="p-3 space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Institution" value={edu.institution} onChange={v => upd({ institution: v })} placeholder="Boston University" className="col-span-2" />
           <Field label="Degree" value={edu.degree} onChange={v => upd({ degree: v })} placeholder="MS Computer Science" />
           <Field label="Field (optional)" value={edu.field ?? ""} onChange={v => upd({ field: v })} placeholder="Data Analytics" />
@@ -392,7 +392,7 @@ function AwardRow({ award, onChange, onDelete }: {
 }) {
   const upd = (patch: Partial<LibraryAward>) => onChange({ ...award, ...patch });
   return (
-    <div className="grid grid-cols-3 gap-2 p-2 border border-border rounded-lg bg-card items-center">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2 border border-border rounded-lg bg-card items-center">
       <input value={award.title} onChange={e => upd({ title: e.target.value })} placeholder="Best ML Project" className="bg-transparent text-[12px] text-foreground placeholder:text-muted-foreground/40 focus:outline-none col-span-1" />
       <input value={award.issuer ?? ""} onChange={e => upd({ issuer: e.target.value })} placeholder="Issuer" className="bg-muted/30 border border-border rounded px-1.5 py-1 text-[11px] text-muted-foreground focus:outline-none" />
       <div className="flex gap-2 items-center">
@@ -545,7 +545,7 @@ export default function MasterProfileEditor({ session, alwaysOpen, seedProfile }
             <>
               {/* ── Header ─────────────────────────────────────────────── */}
               <Section title="Header" count={1}>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="Full Name" value={profile.header.name} onChange={v => updHeader({ name: v })} placeholder="Jane Doe" />
                   <Field label="Professional Title" value={profile.header.title} onChange={v => updHeader({ title: v })} placeholder="ML Engineer | NLP" />
                   <Field label="Phone" value={profile.header.phone} onChange={v => updHeader({ phone: v })} placeholder="617-000-0000" />

@@ -126,18 +126,18 @@ function AnimatedStatCard({
       {/* Left accent notch — appears on hover */}
       <div className="absolute left-0 top-0 h-full w-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
 
-      <div className="relative p-5">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      <div className="relative p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-3 sm:mb-4">
+          <span className="text-[10px] sm:text-xs font-semibold tracking-wide text-muted-foreground uppercase truncate">
             {cfg.label}
           </span>
-          <span className={cn("flex h-7 w-7 items-center justify-center rounded-lg", cfg.iconBg)}>
-            <Icon className={cn("h-3.5 w-3.5", cfg.iconColor)} />
+          <span className={cn("flex h-6 w-6 sm:h-7 sm:w-7 shrink-0 items-center justify-center rounded-lg", cfg.iconBg)}>
+            <Icon className={cn("h-3 w-3 sm:h-3.5 sm:w-3.5", cfg.iconColor)} />
           </span>
         </div>
         <span
           className={cn(
-            "block text-5xl font-black tabular-nums leading-none tracking-tighter number-pop",
+            "block text-3xl sm:text-5xl font-black tabular-nums leading-none tracking-tighter number-pop",
             cfg.numClass
           )}
         >
@@ -235,7 +235,7 @@ export default function ApplicationsTab({
         )}
 
         {/* ── Stat cards ─────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
           {STAT_CARDS.map((cfg, i) => (
             <AnimatedStatCard
               key={cfg.key}
@@ -247,7 +247,7 @@ export default function ApplicationsTab({
         </div>
 
         {/* ── Toolbar ────────────────────────────────────────────────── */}
-        <div className="flex gap-3 animate-fade-in [animation-delay:200ms]">
+        <div className="flex flex-col sm:flex-row gap-3 animate-fade-in [animation-delay:200ms]">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -266,8 +266,83 @@ export default function ApplicationsTab({
           </Button>
         </div>
 
+        {/* ── Mobile card list ──────────────────────────────────────── */}
+        <div className="md:hidden animate-fade-in [animation-delay:250ms] space-y-2.5">
+          {loading ? (
+            <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin text-primary/50" />
+              <span className="text-sm">Loading applications…</span>
+            </div>
+          ) : sortedApps.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-16 rounded-xl glass">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border/50 bg-muted/30 dark:border-white/[0.07] dark:bg-white/[0.03]">
+                <Building2 className="h-7 w-7 text-muted-foreground/30" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-semibold text-muted-foreground">
+                  {searchTerm ? "No matching applications" : "No applications yet"}
+                </p>
+                <p className="text-xs text-muted-foreground/50 mt-0.5">
+                  {searchTerm ? "Try a different search term" : "Tap \"Add Application\" to get started"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            sortedApps.map((app) => {
+              const cfg = STATUS_CONFIG[app.status] ?? STATUS_CONFIG["Applied"];
+              const resumeLink = resumeAppLinks?.[app.id];
+              return (
+                <div
+                  key={app.id}
+                  onClick={() => onRowClick(app)}
+                  className="rounded-xl glass p-4 active:bg-muted/40 dark:active:bg-white/[0.04] transition-colors"
+                >
+                  <div className="flex items-start gap-3">
+                    <CompanyAvatar company={app.company} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-[13px] text-foreground/90 truncate">{app.company}</p>
+                      <p className="text-[12px] text-muted-foreground truncate">{app.position}</p>
+                    </div>
+                    <span className={cn(
+                      "shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                      cfg.color, cfg.bg, cfg.border
+                    )}>
+                      {app.status}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground/60 tabular-nums">
+                      <span>Applied {formatDate(app.dateApplied)}</span>
+                      {app.referral === "Yes" && <Badge variant="success" className="text-[9px]">Referred</Badge>}
+                    </div>
+                    <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                      {resumeLink && (
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewResume?.(resumeLink.id)}>
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(app)}>
+                        <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onDelete(app.id)}>
+                        <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+          {sortedApps.length > 0 && (
+            <p className="text-[11px] text-muted-foreground/40 tabular-nums text-center pt-1">
+              {sortedApps.length} {sortedApps.length === 1 ? "application" : "applications"}
+              {searchTerm ? " matched" : ""}
+            </p>
+          )}
+        </div>
+
         {/* ── Table ──────────────────────────────────────────────────── */}
-        <div className="animate-fade-in [animation-delay:250ms] overflow-hidden rounded-xl glass">
+        <div className="hidden md:block animate-fade-in [animation-delay:250ms] overflow-hidden rounded-xl glass">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>

@@ -5,6 +5,7 @@ import type { AssembleResult } from '@/components/tabs/TailorTab';
 import { useResumeData } from '@/hooks/useResumeData';
 import { useAutoFit } from '@/hooks/useAutoFit';
 import { usePDFExport } from '@/components/resume/export/generatePDF';
+import { cn } from '@/lib/utils';
 import ResumeToolbar from './toolbar/ResumeToolbar';
 import EditorPanel from './editor/EditorPanel';
 import PreviewPanel from './preview/PreviewPanel';
@@ -105,6 +106,11 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
   });
 
   const activeVersion = versions.find((v) => v.id === activeVersionId);
+
+  // Mobile only — the editor and preview each need the full viewport height to
+  // scroll properly, so on phones they're shown one at a time instead of
+  // stacked (stacking left both without a bounded height to scroll within).
+  const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
 
   const handlePrint = usePDFExport({
     versionName: activeVersion?.version_name ?? 'Resume',
@@ -225,9 +231,29 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
         scoringDisabledReason={scoringDisabledReason}
       />
 
-      <div className="flex flex-1 overflow-hidden md:flex-row flex-col">
+      {/* Mobile-only Edit/Preview toggle */}
+      <div className="md:hidden flex items-center gap-1 rounded-lg border border-border bg-card m-2 p-1 shrink-0">
+        {(['edit', 'preview'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setMobileView(v)}
+            className={cn(
+              "flex-1 h-8 rounded-md text-[12px] font-medium capitalize transition-colors",
+              mobileView === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-1 min-h-0 overflow-hidden md:flex-row flex-col">
         {/* Left: Editor */}
-        <div className="md:w-[380px] w-full md:border-r border-border shrink-0 overflow-hidden flex flex-col">
+        <div className={cn(
+          "md:w-[380px] w-full md:border-r border-border md:shrink-0 overflow-hidden flex-col min-h-0",
+          mobileView === "edit" ? "flex flex-1 md:flex-none" : "hidden md:flex md:flex-none"
+        )}>
           <EditorPanel
             content={content}
             settings={settings}
@@ -237,7 +263,10 @@ export default function ResumeBuilderLayout({ session, assembleResult, onDismiss
         </div>
 
         {/* Right: Preview */}
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className={cn(
+          "flex-1 min-h-0 flex-col",
+          mobileView === "preview" ? "flex" : "hidden md:flex"
+        )}>
           <PreviewPanel
             previewRef={printRef}
             content={content}

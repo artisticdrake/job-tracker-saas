@@ -200,8 +200,9 @@ function EditableBulletList({
         <>
           <p className="text-[10.5px] text-muted-foreground -mt-1">
             Edit any line (keep <code className="text-amber-400/80">[X]</code> placeholders), check the ones
-            to include, then Send to Builder. Claude assembles a fresh one-page resume from your Master
-            Profile, your current resume, and the bullets you approve.
+            to include, then Weave in &amp; send. Claude re-optimizes the tailored resume above to fit these
+            bullets in — that costs a second Claude call, so skip this if you don't need any of them and use
+            "Send to Builder" above instead.
           </p>
 
           <div className="space-y-2.5">
@@ -271,8 +272,8 @@ function EditableBulletList({
               className="ml-auto h-8 text-[11px]"
             >
               {sending
-                ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Assembling…</>
-                : <>Send {checkedCount > 0 ? `${checkedCount} ` : ""}to Builder<ArrowRight className="h-3.5 w-3.5 ml-1.5" /></>}
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Weaving in…</>
+                : <>Weave in {checkedCount > 0 ? `${checkedCount} ` : ""}&amp; send<ArrowRight className="h-3.5 w-3.5 ml-1.5" /></>}
             </Button>
           </div>
         </>
@@ -556,7 +557,7 @@ function CoverLetterPanel({
 
       {/* Role / Company — prefilled from autofill, editable. Supply a role here if
           extraction missed it so the letter names it instead of staying generic. */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div>
           <label className="text-[11px] text-muted-foreground font-label uppercase tracking-wider mb-1 block">
             Role (optional)
@@ -690,9 +691,15 @@ export default function TailorTab({ apps, session, onAssembled }: Props) {
   const [genError, setGenError] = useState<string | null>(null);
   const [result, setResult] = useState<ClaudeResult | null>(saved.result ?? null);
 
-  // Server-side assembly ("Send to Builder")
+  // Server-side assembly ("Send to Builder" with woven-in bullet edits — costs a
+  // second Claude call, so it's reserved for when there's actually text to weave in)
   const [assembling, setAssembling] = useState(false);
   const [assembleError, setAssembleError] = useState<string | null>(null);
+
+  // Direct commit of the already-tailored resumeContent — no second Claude call.
+  const [committing, setCommitting] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
+  const [committed, setCommitted] = useState(false);
 
   // ── sessionStorage: persist on change ───────────────────────────────────────
   useEffect(() => {
@@ -731,6 +738,8 @@ export default function TailorTab({ apps, session, onAssembled }: Props) {
     setGenError(null);
     setResult(null);
     setAssembleError(null);
+    setCommitError(null);
+    setCommitted(false);
 
     try {
       const res = await fetch(`${API}/tailor/claude`, {
@@ -755,6 +764,10 @@ export default function TailorTab({ apps, session, onAssembled }: Props) {
   }, [jdText, linkedAppId, session]);
 
   // ── Send approved bullets to the server-side assembly pass ──────────────────
+  // Costs a real Claude call — it's weaving new bullet text into a resume, which
+  // needs judgment (which section, what to trim to stay one page). Builds on top
+  // of the resume /tailor/claude already produced (`currentResume`) instead of
+  // re-deriving one from scratch or from some unrelated older Builder version.
   const handleSendToBuilder = useCallback(async (approved: ApprovedBullet[]) => {
     if (!jdText.trim()) return;
     setAssembling(true);
@@ -770,6 +783,7 @@ export default function TailorTab({ apps, session, onAssembled }: Props) {
         body: JSON.stringify({
           jobDescription: jdText,
           approvedBullets: approved,
+          currentResume: result?.resumeContent,
           company: linkedApp?.company,
           role: linkedApp?.position,
           applicationId: linkedAppId || undefined,
@@ -783,7 +797,42 @@ export default function TailorTab({ apps, session, onAssembled }: Props) {
     } finally {
       setAssembling(false);
     }
-  }, [jdText, linkedAppId, apps, session, onAssembled]);
+  }, [jdText, linkedAppId, apps, session, onAssembled, result]);
+
+  // ── Send the already-tailored resume straight to the Builder — NO Claude call.
+  // /tailor/claude already did the generation; this just persists that result as
+  // a new Builder version instead of paying for a second full assembly pass.
+  const handleCommitToBuilder = useCallback(async () => {
+    if (!result?.resumeContent || !jdText.trim()) return;
+    setCommitting(true);
+    setCommitError(null);
+    try {
+      const linkedApp = linkedAppId ? apps.find(a => a.id === linkedAppId) : null;
+      const res = await fetch(`${API}/tailor/commit`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          resumeContent: result.resumeContent,
+          jobDescription: jdText,
+          score: result.review?.matchScore ?? null,
+          company: linkedApp?.company,
+          role: linkedApp?.position,
+          applicationId: linkedAppId || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to send to Builder.");
+      setCommitted(true);
+      onAssembled({ score: data.score ?? null, changeLog: [], at: Date.now() });
+    } catch (e: any) {
+      setCommitError(e?.message || "Failed to send to Builder.");
+    } finally {
+      setCommitting(false);
+    }
+  }, [result, jdText, linkedAppId, apps, session, onAssembled]);
 
   return (
     <div className="space-y-5">
@@ -919,6 +968,26 @@ export default function TailorTab({ apps, session, onAssembled }: Props) {
               <RefreshCw className="h-3 w-3" />Re-generate
             </button>
           </div>
+
+          {/* Send the tailored resume straight to the Builder — no extra Claude call */}
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleCommitToBuilder}
+              disabled={committing}
+              className="flex-1"
+            >
+              {committing
+                ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Sending…</>
+                : committed
+                  ? <><Check className="h-4 w-4 mr-2" />Sent — send again for another version</>
+                  : <>Send to Builder<ArrowRight className="h-4 w-4 ml-2" /></>}
+            </Button>
+          </div>
+          {commitError && (
+            <p className="text-[12px] text-destructive flex items-center gap-1.5">
+              <XCircle className="h-3.5 w-3.5 shrink-0" />{commitError}
+            </p>
+          )}
 
           {/* Claude's review */}
           {result.review && (

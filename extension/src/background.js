@@ -1,4 +1,4 @@
-// Job Tracker — Background Service Worker
+// Zenith — Background Service Worker
 // Handles auth (Supabase Google OAuth), API bridge, and message routing.
 //
 // SETUP (one-time, after loading the extension):

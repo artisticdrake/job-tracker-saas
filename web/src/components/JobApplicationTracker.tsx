@@ -725,7 +725,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
   // ── shell ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-background">
       <Sidebar
         activeTab={activeTab}
         onTabChange={(tab) => {
@@ -755,9 +755,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
         {/* Master Info — always mounted so state survives resume-builder tab switches */}
         <div className={activeTab === "master-info" ? "flex-1 overflow-y-auto" : "hidden"}>
-          <div className="relative z-10 max-w-7xl mx-auto px-7 py-8">
+          <div className="relative z-10 max-w-7xl mx-auto px-4 py-6 md:px-7 md:py-8">
             <div className="mb-8">
-              <h1 className="text-[28px] font-black tracking-tight leading-tight">
+              <h1 className="text-[22px] md:text-[28px] font-black tracking-tight leading-tight">
                 Master <span className="gradient-text">Information</span>
               </h1>
               <p className="text-[13px] text-muted-foreground/60 mt-1.5">
@@ -770,9 +770,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
         {/* Tailor — always mounted so the JD and results survive tab switches */}
         <div className={activeTab === "tailor" ? "flex-1 overflow-y-auto" : "hidden"}>
-          <div className="relative z-10 max-w-7xl mx-auto px-7 py-8">
+          <div className="relative z-10 max-w-7xl mx-auto px-4 py-6 md:px-7 md:py-8">
             <div className="mb-8">
-              <h1 className="text-[28px] font-black tracking-tight leading-tight">
+              <h1 className="text-[22px] md:text-[28px] font-black tracking-tight leading-tight">
                 Resume <span className="gradient-text">Tailor</span>
               </h1>
               <p className="text-[13px] text-muted-foreground/60 mt-1.5">
@@ -789,9 +789,9 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
         {/* Jobs — always mounted so the paste box + ranked list survive tab switches */}
         <div className={activeTab === "jobs" ? "flex-1 overflow-y-auto" : "hidden"}>
-          <div className="relative z-10 max-w-7xl mx-auto px-7 py-8">
+          <div className="relative z-10 max-w-7xl mx-auto px-4 py-6 md:px-7 md:py-8">
             <div className="mb-8">
-              <h1 className="text-[28px] font-black tracking-tight leading-tight">
+              <h1 className="text-[22px] md:text-[28px] font-black tracking-tight leading-tight">
                 Job <span className="gradient-text">Triage</span>
               </h1>
               <p className="text-[13px] text-muted-foreground/60 mt-1.5">
@@ -840,7 +840,7 @@ export default function JobApplicationTracker({ session }: { session: any }) {
 
           {/* Page header */}
           <div className="mb-8">
-            <h1 className="text-[28px] font-black tracking-tight leading-tight">
+            <h1 className="text-[22px] md:text-[28px] font-black tracking-tight leading-tight">
               {activeTab === "applications" && (
                 displayName
                   ? <>Welcome back, <span className="gradient-text">{displayName.split(" ")[0]}</span> 👋</>

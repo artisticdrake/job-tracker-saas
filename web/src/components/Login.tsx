@@ -61,8 +61,7 @@ export default function Login() {
           </div>
 
           <h1 className="text-[42px] font-black leading-none tracking-tight mb-3">
-            Job{" "}
-            <span className="gradient-text">Tracker</span>
+            <span className="gradient-text">Zenith</span>
           </h1>
           <p className="text-muted-foreground text-[15px] leading-relaxed">
             Your AI-powered command center for

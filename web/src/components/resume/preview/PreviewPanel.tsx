@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import type { ResumeContent, ResumeSettings } from '@/types/resume.types';
 import ResumePreview from './ResumePreview';
 import PageOverflowWarning from './PageOverflowWarning';
@@ -9,15 +9,54 @@ interface Props {
   settings: ResumeSettings;
 }
 
+const PAGE_WIDTH_PX = 816; // 8.5in at 96dpi
 const PAGE_HEIGHT_PX = 1056; // 11in at 96dpi
+const SCROLLER_SIDE_PADDING_PX = 32; // px-4 on each side of the scroll container
 
 const ZOOM_STEPS = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5];
 const DEFAULT_ZOOM_IDX = 7; // 1.0
+
+// Nearest zoom step to whatever width the page actually fits in — so the
+// resume defaults to "fit the screen" instead of always opening at 100% and
+// getting clipped on narrow (mobile) viewports.
+function nearestZoomIdx(target: number): number {
+  let bestIdx = 0;
+  let bestDiff = Infinity;
+  ZOOM_STEPS.forEach((z, i) => {
+    const diff = Math.abs(z - target);
+    if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+  });
+  return bestIdx;
+}
 
 export default function PreviewPanel({ previewRef, content, settings }: Props) {
   const [overflow, setOverflow] = useState(false);
   const [zoomIdx, setZoomIdx] = useState(DEFAULT_ZOOM_IDX);
   const zoom = ZOOM_STEPS[zoomIdx];
+
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  // Once the user manually touches zoom, stop auto-fitting on resize — their
+  // choice wins until they hit Reset (which re-enables auto-fit).
+  const userAdjustedRef = useRef(false);
+
+  const fitToContainer = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const available = el.clientWidth - SCROLLER_SIDE_PADDING_PX;
+    const target = Math.min(1, Math.max(0.4, available / PAGE_WIDTH_PX));
+    setZoomIdx(nearestZoomIdx(target));
+  }, []);
+
+  useEffect(() => {
+    fitToContainer();
+    const el = scrollerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (!userAdjustedRef.current) fitToContainer();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fitToContainer]);
 
   useEffect(() => {
     const el = previewRef.current;
@@ -40,7 +79,7 @@ export default function PreviewPanel({ previewRef, content, settings }: Props) {
         <button
           type="button"
           disabled={zoomIdx === 0}
-          onClick={() => setZoomIdx((i) => Math.max(0, i - 1))}
+          onClick={() => { userAdjustedRef.current = true; setZoomIdx((i) => Math.max(0, i - 1)); }}
           className="h-6 w-6 flex items-center justify-center rounded text-sm text-muted-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           title="Zoom out"
           aria-label="Zoom out"
@@ -53,7 +92,7 @@ export default function PreviewPanel({ previewRef, content, settings }: Props) {
         <button
           type="button"
           disabled={zoomIdx === ZOOM_STEPS.length - 1}
-          onClick={() => setZoomIdx((i) => Math.min(ZOOM_STEPS.length - 1, i + 1))}
+          onClick={() => { userAdjustedRef.current = true; setZoomIdx((i) => Math.min(ZOOM_STEPS.length - 1, i + 1)); }}
           className="h-6 w-6 flex items-center justify-center rounded text-sm text-muted-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           title="Zoom in"
           aria-label="Zoom in"
@@ -62,9 +101,9 @@ export default function PreviewPanel({ previewRef, content, settings }: Props) {
         </button>
         <button
           type="button"
-          onClick={() => setZoomIdx(DEFAULT_ZOOM_IDX)}
+          onClick={() => { userAdjustedRef.current = false; fitToContainer(); }}
           className="ml-1 h-6 px-2 text-[10px] text-muted-foreground hover:bg-muted rounded transition-colors"
-          title="Reset zoom"
+          title="Reset zoom to fit screen"
         >
           Reset
         </button>
@@ -73,6 +112,7 @@ export default function PreviewPanel({ previewRef, content, settings }: Props) {
       <PageOverflowWarning overflow={overflow} />
 
       <div
+        ref={scrollerRef}
         className="flex-1 min-h-0 overflow-auto"
         style={{ background: '#e5e7eb' }}
       >

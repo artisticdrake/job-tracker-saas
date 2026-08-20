@@ -55,7 +55,7 @@
     return `
       <div style="padding:12px 14px;background:#121d3a;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:9px;">
         <div style="width:8px;height:8px;border-radius:50%;background:${colorDot};flex-shrink:0;"></div>
-        <span style="font-size:13px;font-weight:700;color:#f8fafc;flex:1;">Job Tracker</span>
+        <span style="font-size:13px;font-weight:700;color:#f8fafc;flex:1;">Zenith</span>
         ${source ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#818cf8;">${source}</span>` : ''}
         ${showClose ? `<button id="jt-close" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:20px;line-height:1;padding:0 2px;margin-left:2px;">×</button>` : ''}
       </div>`;
@@ -123,7 +123,7 @@
         <div id="jt-err" style="display:none;color:#f87171;font-size:11px;margin-bottom:8px;"></div>
         <button id="jt-save"
           style="width:100%;padding:10px;background:#6366f1;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:7px;display:flex;align-items:center;justify-content:center;gap:7px;">
-          Save to Job Tracker
+          Save to Zenith
         </button>
         <button id="jt-dismiss2"
           style="width:100%;padding:8px;background:transparent;border:1px solid #1e293b;border-radius:8px;color:#64748b;font-size:12px;cursor:pointer;">
@@ -160,7 +160,7 @@
       ${panelHeader('#334155', '', true)}
       <div style="padding:20px 16px;text-align:center;">
         <div style="font-size:12px;color:#64748b;margin-bottom:14px;line-height:1.5;">
-          Sign in to Job Tracker to auto-save postings as you browse.
+          Sign in to Zenith to auto-save postings as you browse.
         </div>
         <button id="jt-nudge-dismiss"
           style="padding:8px 16px;background:transparent;border:1px solid #334155;border-radius:8px;color:#94a3b8;font-size:12px;cursor:pointer;">
@@ -232,7 +232,7 @@
       response = await chrome.runtime.sendMessage({ type: 'SAVE_JOB', jobData });
     } catch (_) {
       if (el.isConnected) {
-        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save to Job Tracker'; }
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save to Zenith'; }
         showFormError(el, 'Extension disconnected. Please try again.');
       }
       return;
@@ -241,7 +241,7 @@
     if (!el.isConnected) return;
 
     if (response?.error) {
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save to Job Tracker'; }
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save to Zenith'; }
       showFormError(el, response.error);
       return;
     }
@@ -312,7 +312,7 @@
     } catch (_) {
       if (el.isConnected) {
         renderReady(el, {});
-        showFormError(el, 'Could not reach Job Tracker API. Is the server running?');
+        showFormError(el, 'Could not reach Zenith API. Is the server running?');
       }
       return;
     }

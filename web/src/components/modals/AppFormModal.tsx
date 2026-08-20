@@ -67,13 +67,13 @@ export default function AppFormModal({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto gap-0 p-0 border border-white/[0.08] bg-card">
-        <DialogHeader className="px-6 pt-6 pb-5 border-b border-white/[0.06]">
-          <DialogTitle className="text-[16px] font-bold">
+        <DialogHeader className="px-4 sm:px-6 pt-5 sm:pt-6 pb-5 border-b border-white/[0.06]">
+          <DialogTitle className="text-[16px] font-bold pr-6">
             {editId ? "Edit Application" : "New Application"}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="px-6 py-5 space-y-5">
+        <div className="px-4 sm:px-6 py-5 space-y-5">
           {dupWarning && (
             <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3.5 text-[13px]">
               <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
@@ -107,7 +107,7 @@ export default function AppFormModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5 relative" ref={companyRef}>
                 <Label className={labelCls}>Company <span className="text-destructive">*</span></Label>
                 <Input placeholder="Acme Corp" required {...field("company")} className={inputCls} />
@@ -188,7 +188,7 @@ export default function AppFormModal({
           </form>
         </div>
 
-        <DialogFooter className="px-6 py-4 border-t border-white/[0.06] bg-white/[0.01] gap-2">
+        <DialogFooter className="px-4 sm:px-6 py-4 border-t border-white/[0.06] bg-white/[0.01] gap-2">
           <Button variant="outline" onClick={onClose}
             className="border-white/[0.1] bg-white/[0.04] hover:bg-white/[0.08] text-[13px]">
             Cancel

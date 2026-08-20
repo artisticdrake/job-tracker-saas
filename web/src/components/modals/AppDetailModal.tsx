@@ -47,24 +47,26 @@ export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineE
     <Dialog open={!!app} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col p-0 gap-0 border border-white/[0.08] bg-card overflow-hidden">
         {/* Header */}
-        <DialogHeader className="px-6 pt-6 pb-5 border-b border-white/[0.06] flex-shrink-0">
-          <div className="flex items-start gap-4 pr-8">
-            <CompanyAvatar company={app.company} />
-            <div className="flex-1 min-w-0">
-              <DialogTitle className="text-[18px] font-bold leading-tight">{app.company}</DialogTitle>
-              <p className="text-[13px] text-muted-foreground mt-0.5">{app.position}</p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                <span className={cn(
-                  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
-                  cfg.color, cfg.bg, cfg.border
-                )}>
-                  {app.status}
-                </span>
-                {app.referral === "Yes" && <Badge variant="success" className="text-[10px]">Referral</Badge>}
-                {app.source && <Badge variant="outline" className="text-[10px] border-white/[0.1]">{app.source}</Badge>}
+        <DialogHeader className="px-4 sm:px-6 pt-5 sm:pt-6 pb-5 border-b border-white/[0.06] flex-shrink-0">
+          <div className="flex flex-col sm:flex-row items-start gap-4 pr-6 sm:pr-8">
+            <div className="flex items-start gap-4 min-w-0">
+              <CompanyAvatar company={app.company} />
+              <div className="flex-1 min-w-0">
+                <DialogTitle className="text-[18px] font-bold leading-tight">{app.company}</DialogTitle>
+                <p className="text-[13px] text-muted-foreground mt-0.5">{app.position}</p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <span className={cn(
+                    "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                    cfg.color, cfg.bg, cfg.border
+                  )}>
+                    {app.status}
+                  </span>
+                  {app.referral === "Yes" && <Badge variant="success" className="text-[10px]">Referral</Badge>}
+                  {app.source && <Badge variant="outline" className="text-[10px] border-white/[0.1]">{app.source}</Badge>}
+                </div>
               </div>
             </div>
-            <div className="flex gap-2 shrink-0">
+            <div className="flex flex-wrap gap-2 shrink-0">
               {app.jobUrl && (
                 <Button variant="outline" size="sm" asChild className="gap-1.5 border-white/[0.1] bg-white/[0.04] hover:bg-white/[0.08] text-[12px] h-8">
                   <a href={app.jobUrl} target="_blank" rel="noreferrer">
@@ -94,10 +96,10 @@ export default function AppDetailModal({ app, onClose, onEdit, onDeleteTimelineE
             stays pinned, body scrolls" inside a max-height dialog; ScrollArea's
             extra Root/Viewport layers were not scrolling reliably here. */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <div className="px-6 py-5 space-y-5">
+          <div className="px-4 sm:px-6 py-5 space-y-5">
 
             {/* Info grid */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
                 { icon: Calendar,   label: "Applied",      value: formatDate(app.dateApplied),       iconBg: "bg-blue-500/10",    iconColor: "text-blue-400"    },
                 { icon: Clock,      label: "Last Updated", value: formatShortDate(app.last_updated), iconBg: "bg-primary/10",     iconColor: "text-primary"     },

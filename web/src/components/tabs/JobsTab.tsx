@@ -135,7 +135,7 @@ function ScrapePanel({
         Pull live postings from a job board — each is scored against your Master Profile and ranked into the board below.
       </p>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <select
           value={platform}
           onChange={e => setPlatform(e.target.value)}
@@ -154,7 +154,7 @@ function ScrapePanel({
         </select>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
@@ -225,7 +225,7 @@ function PasteJobBox({ onAdd, adding }: { onAdd: (b: { jd_text: string; title?: 
         Drop a job description in. It is scored against your Master Profile automatically — generation is per-job, on click.
       </p>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <input
           value={title}
           onChange={e => setTitle(e.target.value)}

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Job Tracker",
+  "name": "Zenith",
   "version": "2.0",
-  "description": "Auto-detect job postings and save them to your Job Tracker",
+  "description": "Auto-detect job postings and save them to your Zenith job tracker",
   "permissions": ["activeTab", "storage", "identity", "tabs", "scripting"],
   "host_permissions": [
     "http://localhost:3000/*",
@@ -38,6 +38,6 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Job Tracker"
+    "default_title": "Zenith"
   }
 }
